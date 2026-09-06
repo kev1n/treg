@@ -485,7 +485,13 @@ async def reap_stale_holds(db: AsyncSession, *, org_id: int | None = None, limit
 # ---- reads -------------------------------------------------------------------------------------
 async def spent_today(db: AsyncSession, org_id: int) -> int:
     """Micro-USD this org has committed since midnight UTC: everything SETTLED today plus everything
-    still HELD from today. Two indexed aggregates, and the number a daily spend cap is checked against.
+    still HELD from today. Two aggregates, and the number a daily spend cap is checked against.
+
+    Runs on EVERY metered call, inside the reserve transaction, on an api-pool connection - so its
+    cost is the platform's throughput. Both range over `(org_id, created_at)`; without that pair
+    (revision 0021) the ledger half scanned the whole platform's day per call and stalled the API
+    pool whenever the day's pages left the buffer cache. Still O(rows this org wrote today), which
+    is why a per-org daily counter is the next step, not a bigger pool.
 
     Deliberately not "sum of reserve entries": a reserve is refunded at settle, so counting both would
     double-charge every call. Settled + still-open is exactly the money that is gone or promised.

@@ -119,8 +119,11 @@ bound to a closed maintenance loop. Calling `maintenance.upgrade()` directly doe
   is two bullets up. A `background` of 4 against 7 consumers needing 13 does not 503; it silently
   drops audit rows. The knob being a dashboard edit rather than a deploy is what makes it useful
   mid-incident and what lets it survive the fix. Today it reads
-  `api.pool_size=10,admin.pool_size=2,background.pool_size=4`; the two stale entries are still
-  there deliberately, so that the `api` change could be observed on its own.
+  `admin.pool_size=2,background.pool_size=4`; the two stale entries are still there deliberately so
+  that one change at a time can be observed. `api.pool_size=10` was added on 2026-09-05 and removed
+  on 2026-09-06: against a database that is waiting on DISK (below), five more slots meant five
+  more readers of the same cold pages, and the worst hour on record (2,136 pool faults at 11:00,
+  on a third of the previous day's traffic) followed.
 - **No statement timeout yet.** The pools bound how many connections a class of work can hold, not
   how long a query may run; `alembic/env.py` still has the only timeouts in the app. Adding per-pool
   `statement_timeout` is deliberately a SEPARATE change: it is a behavior change on every query,
@@ -147,6 +150,20 @@ bound to a closed maintenance loop. Calling `maintenance.upgrade()` directly doe
   through `ix_callrecord_endpoint_id_id` because no index carried `created_at` (revision 0020
   adds the pairs). **Reach for a pool size only after ruling out a scan;** raising it buys headroom
   and hides the cause.
+
+  That diagnosis was half right. Re-measured 2026-09-06 with wait events instead of response
+  times: 88 % of active backends sat in `IO DataFileRead` / `IPC BufferIO` (waiting for a page, or
+  for ANOTHER backend reading the same page), 18 of 879 samples were on CPU. The database is not
+  CPU-bound; it is a 512 MB buffer cache in front of 35 GB, and the query holding the pool was
+  not on `callrecord` at all: 674 of 879 active samples were `ledger.spent_today` on
+  `ledgerentry`, the fail-closed daily cap that runs inside EVERY metered call's reserve
+  transaction on an api-pool connection, scanning the whole platform's day because no index paired
+  `org_id` with `created_at` (revision 0021 adds it; `ledgerentry` had read 6.5 BILLION heap
+  blocks, four times `callrecord`). Whenever a large scan evicts the day's ledger pages - the
+  30-day observation refresh, the `/billing` page's backward index walk, the per-call
+  `idempotentcall` sweep, a concurrent index build - every in-flight `spent_today` stalls together
+  for tens of seconds, and 20 slots are gone. Two lessons: **sample `wait_event_type`, not
+  latency**, and on a disk-bound database a bigger pool is more contention, not more throughput.
 - **SQLite aliases all three to one engine.** It has no pool to protect and file-level write locks
   it cannot share, so three engines against one file would only manufacture "database is locked".
   Tests therefore pin the ROUTING (which maker each module reaches for), not the isolation.

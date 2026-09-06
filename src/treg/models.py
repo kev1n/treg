@@ -670,6 +670,17 @@ class LedgerEntry(SQLModel, table=True):
     reserve/settle is negative. `call_id` correlates the reserve→settle / reserve→release pair.
     """
 
+    # `(org_id, created_at)` is what EVERY metered call pays for: `ledger.spent_today` (the
+    # fail-closed daily cap, inside the reserve transaction on an api-pool connection) asks
+    # "this org, since midnight". With only single-column indexes the planner walked the whole
+    # platform's day and filtered the org in memory - measured on prod 2026-09-06 at 4.38M rows:
+    # 322k rows discarded and 381k buffer touches per call, 56-106 s once the day's pages were
+    # cold, each one holding an api-pool slot. That was the `503 treg_saturated` mechanism, and
+    # this table (not `callrecord`) was the largest IO consumer in the database. The pair also
+    # serves `entries_of` (`/billing`), which had walked the whole `created_at` index backward.
+    # Revision 0021 builds it concurrently.
+    __table_args__ = (Index("ix_ledgerentry_org_id_created_at", "org_id", "created_at"),)
+
     id: str = Field(primary_key=True)  # uuid4 hex
     org_id: int = Field(foreign_key="org.id", index=True)
     block_id: str | None = Field(default=None, index=True)

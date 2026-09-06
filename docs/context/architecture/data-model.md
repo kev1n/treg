@@ -17,6 +17,7 @@ sources:
   - src/treg/alembic/versions/0018_async_resource_ownership.py
   - src/treg/alembic/versions/0019_async_poll_failures.py
   - src/treg/alembic/versions/0020_callrecord_created_at_indexes.py
+  - src/treg/alembic/versions/0021_ledgerentry_org_created_at_index.py
   - src/treg/alembic/versions/0011_callrecord_archive_link.py
   - src/treg/alembic/versions/0015_idempotentcall_membership_cascade.py
   - src/treg/maintenance.py
@@ -151,6 +152,17 @@ uses this metadata, never the encrypted token's shape.
   getting this wrong is not a slow page: all three connection pools share one Postgres, so a scan
   here queues every other query and the API pool empties into `503 treg_saturated` - see
   [deploy](../ops/deploy.md) § Three pools. The table has no retention sweep yet, so it only grows.
+
+  **`LedgerEntry` is the other one, and it was the larger.** It is append-only and never pruned
+  (4.38M rows / 2.3 GB on prod 2026-09-06, ~400k rows a day), and `ledger.spent_today` - the
+  fail-closed daily cap - reads it on EVERY metered call, inside the reserve transaction, on an
+  api-pool connection. With only single-column indexes the planner walked the whole platform's day
+  through `ix_ledgerentry_created_at` and filtered the org in memory: 322k rows discarded and 381k
+  buffer touches per call, 56-106 s once the day's pages had been evicted from a 512 MB cache, and
+  the heap had read 6.5 BILLION blocks - four times `callrecord`. Revision 0021 adds
+  `(org_id, created_at)`, which also serves `entries_of` (the `/billing` page, previously a
+  backward walk of the whole `created_at` index). The remaining cost is O(rows this org wrote
+  today); a per-org daily counter is the structural follow-up.
 
   `refused_by` distinguishes a treg refusal (`auth`, `policy`, `balance`, `cap`, `resolution`,
   `request`, and other mechanism-specific values) from an upstream answer, where it is null.

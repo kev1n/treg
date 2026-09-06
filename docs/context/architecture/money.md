@@ -661,6 +661,14 @@ and the deployment's `platform_daily_cap_usd` ceiling (default $500/day). The te
 limit and inspect it through `GET /orgs/{id}/settings`. A request above the platform ceiling is
 refused, not silently clamped.
 
+The check itself, `ledger.spent_today`, is the most-run query on the platform: every metered call,
+inside the reserve transaction, on an api-pool connection, fail-closed. Its cost is therefore the
+platform's throughput, and it is O(rows this org wrote today) over `(org_id, created_at)` -
+revision 0021, after the pair's absence had it scanning the whole platform's day per call and
+draining the API pool (see [deploy](../ops/deploy.md) § Three pools). The "second materialized
+authority on spend" rejected above for tag caps is exactly what would make this O(1); revisit that
+trade-off when this table's growth makes the range scan the next bottleneck.
+
 ## Referrals
 
 `domain/referrals.py` owns policy; credit moves only through `ledger.grant`. Rewards are flat,
