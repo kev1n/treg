@@ -232,7 +232,23 @@ class CallRecord(SQLModel, table=True):
                       # Without the pair, the planner walked the WHOLE table backward via the
                       # primary key, testing endpoint_id row by row — measured 7.5s per click on
                       # prod (2026-09-03). With it, the same question is a 30-row index read.
-                      Index("ix_callrecord_endpoint_id_id", "endpoint_id", "id"),)
+                      Index("ix_callrecord_endpoint_id_id", "endpoint_id", "id"),
+                      # EVERY question asked of this table is "… since <time>", and until now no
+                      # index carried `created_at`, so the planner picked an index for the other
+                      # column and filtered the date in memory — reading the endpoint's or the
+                      # org's WHOLE history to answer a 30-day question. Measured on prod
+                      # 2026-09-06 at 2.94M rows / 1.68 GB: `ix_callrecord_endpoint_id_id` had
+                      # read 1.60 BILLION tuples across 570k scans (the catalog observation
+                      # refresh, `domain/catalog/stats.py`, WINDOW_DAYS=30), `ix_callrecord_org_id`
+                      # 295M across 70k (the per-member daily counts in `routers/orgs.py`), and
+                      # the table had taken 80,932 sequential scans for 27 BILLION tuples.
+                      #
+                      # That load is why the API pool saturates: the three pools bulkhead
+                      # CONNECTIONS, not the one database's CPU, so a scan of this table makes
+                      # every 3 ms request query queue behind it until `pool_timeout` fires and
+                      # callers get `503 treg_saturated`. Sizing the pool cannot fix a scan.
+                      Index("ix_callrecord_endpoint_id_created_at", "endpoint_id", "created_at"),
+                      Index("ix_callrecord_org_id_created_at", "org_id", "created_at"),)
 
     id: int | None = Field(default=None, primary_key=True)
     org_id: int | None = Field(default=None, foreign_key="org.id", index=True)

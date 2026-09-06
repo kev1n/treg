@@ -16,6 +16,7 @@ sources:
   - src/treg/alembic/versions/0017_async_task_record.py
   - src/treg/alembic/versions/0018_async_resource_ownership.py
   - src/treg/alembic/versions/0019_async_poll_failures.py
+  - src/treg/alembic/versions/0020_callrecord_created_at_indexes.py
   - src/treg/alembic/versions/0011_callrecord_archive_link.py
   - src/treg/alembic/versions/0015_idempotentcall_membership_cascade.py
   - src/treg/maintenance.py
@@ -138,6 +139,18 @@ uses this metadata, never the encrypted token's shape.
   Its `kind` is `call`, `local_run`, or `async_poll` for an authorized free platform status read.
   Poll rows remain available by call reference and in admin diagnostics, but `/calls` excludes
   them before pagination. No migration or historical reclassification is required.
+
+  **Its indexes are the platform's throughput.** It is the largest table (2.94M rows / 1.68 GB on
+  prod 2026-09-06) and every question asked of it is "… since <time>", so a `created_at` that no
+  index carried meant the planner chose an index for the other column and filtered the date in
+  memory - reading an endpoint's or an org's WHOLE history to answer a 30-day one. Revision 0020
+  adds `(endpoint_id, created_at)` for the catalog observation refresh (`domain/catalog/stats.py`,
+  which had read 1.60 BILLION tuples across 570k scans) and `(org_id, created_at)` for the
+  per-member daily counts (`routers/orgs.py`, 295M across 70k); 0016 already pairs
+  `(endpoint_id, id)` for the newest-N feed and 0012 a partial index on `cached`. The cost of
+  getting this wrong is not a slow page: all three connection pools share one Postgres, so a scan
+  here queues every other query and the API pool empties into `503 treg_saturated` - see
+  [deploy](../ops/deploy.md) § Three pools. The table has no retention sweep yet, so it only grows.
 
   `refused_by` distinguishes a treg refusal (`auth`, `policy`, `balance`, `cap`, `resolution`,
   `request`, and other mechanism-specific values) from an upstream answer, where it is null.
