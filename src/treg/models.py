@@ -174,8 +174,15 @@ class Membership(SQLModel, table=True):
     promoted_from: str = Field(default="")
     webhook_url: str | None = Field(default=None)  # health alerts for this member's org POST here
     # Per-user, per-day usage cap for this org (counts proxy calls + local + server runs). -1 = unlimited
-    # (the default — nobody is capped until an admin sets a limit). See api._enforce_daily_cap.
+    # (the default — nobody is capped until an admin sets a limit). See governance/usage.enforce_daily_cap.
     daily_call_cap: int = Field(default=-1)
+    # The number that cap is checked against: usage events the gate has admitted since midnight
+    # UTC, and which UTC day it belongs to. Taken with ONE conditional UPDATE per capped call, so
+    # the check costs no count over `callrecord` (which had read a member's whole history per
+    # call - revision 0024) and the cap is exact rather than "a few extra slip through". Only
+    # capped members are counted; the roster's `used_today` still reads the journal.
+    calls_today: int = Field(default=0, sa_column=Column("calls_today", Integer, nullable=False, server_default="0"))
+    calls_today_day: date | None = Field(default=None)
     # Per-member tool ACL: NULL = ALL tools in the org (the default — no restriction, no regression); a
     # JSON list of tool NAMES = the ONLY tools this member may call or run. See api._require_tool_access.
     tool_access: list | None = Field(default=None, sa_column=Column("tool_access", JSON, nullable=True))

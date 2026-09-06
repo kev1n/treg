@@ -20,6 +20,7 @@ sources:
   - src/treg/alembic/versions/0021_ledgerentry_org_created_at_index.py
   - src/treg/alembic/versions/0022_org_spent_today_counter.py
   - src/treg/alembic/versions/0023_callrecord_org_user_created_at_index.py
+  - src/treg/alembic/versions/0024_membership_calls_today_counter.py
   - src/treg/alembic/versions/0011_callrecord_archive_link.py
   - src/treg/alembic/versions/0015_idempotentcall_membership_cascade.py
   - src/treg/maintenance.py
@@ -95,8 +96,10 @@ uses this metadata, never the encrypted token's shape.
 - **`Membership`** - links a user to an org: `user_id`, `org_id`, `role` (owner|admin|member),
   `token_hash` (SHA-256 of the bearer token, shown once), `webhook_url` (health alerts POST here),
   `daily_call_cap` (per-user, per-day usage cap; **-1 = unlimited**, the default - see
-  `api._enforce_daily_cap`); unique `(user_id, org_id)`. **A token = a `(user, org)` pair.** `ROLE_RANK`
-  orders the roles.
+  `governance/usage.enforce_daily_cap`) with `calls_today` / `calls_today_day`, the counter that cap
+  is checked against (one conditional UPDATE per capped event, revision 0024; only capped members are
+  counted, the roster reads the journal); unique `(user_id, org_id)`. **A token = a `(user, org)`
+  pair.** `ROLE_RANK` orders the roles.
 - **`Invite`** - a one-time join code: `org_id, email, role, code_hash (idx), status`
   (pending|accepted|revoked), `invited_by`. Carries a SECOND split secret, `email_token_hash (idx,
   nullable)` - the inbox-only sign-in token embedded ONLY in the invite email's link (the
@@ -171,7 +174,10 @@ uses this metadata, never the encrypted token's shape.
   as `spent_today_from_ledger` for reconciliation. The same shape on `callrecord` - the per-user
   daily call cap, `count_today`, which BitmapAnd-ed a member's whole history through
   `ix_callrecord_user_email` (2.6 s of 3.0 s for a 287k-row member) - gets
-  `(org_id, user_email, created_at)` in revision 0023.
+  `(org_id, user_email, created_at)` in revision 0023, and then the same answer as the ledger: the
+  index-only scan still fetched the heap for today's not-yet-vacuumed pages (110k heap fetches,
+  2.8 s), so revision 0024 moves the gate to `Membership.calls_today` and the journal count is
+  left to the roster and `/usage/me`.
 
   `refused_by` distinguishes a treg refusal (`auth`, `policy`, `balance`, `cap`, `resolution`,
   `request`, and other mechanism-specific values) from an upstream answer, where it is null.

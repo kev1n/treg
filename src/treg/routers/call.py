@@ -41,11 +41,11 @@ from ..config import get_settings
 from ..domain.catalog import store as catalog_store
 from ..domain.governance import access as access_policy
 from ..domain.governance import publicdemo as publicdemo_policy
+from ..domain.governance import usage as usage_policy
 from ..domain.identity.access import Caller, require_member
 from ..infra.db import get_session
 from ..models import Tool
 from .auth import _client_ip
-from .orgs import count_today
 
 
 # The app alias preserves the moved handlers' decorator text byte-for-byte.
@@ -122,17 +122,16 @@ async def _enforce_public_demo_ip_cap(request: Request, db: AsyncSession) -> Non
 
 
 async def _enforce_daily_cap(caller: Caller, db: AsyncSession) -> None:
-    """Refuse a call/run once the caller has used their per-user daily cap for this org. `-1` (the
-    default) = unlimited, so unmetered members pay ZERO extra queries. The sandbox has its own limiter
-    and is exempt. Soft by design: the count reads best-effort `CallRecord`s, so under heavy load it
-    can lag slightly and fail OPEN (a few extra slip through) — never closed. See docs/USAGE-METERING-PLAN.md."""
-    cap = caller.membership.daily_call_cap
-    if cap < 0 or demo_sandbox.is_sandbox(caller.org):
-        return
-    used = await count_today(db, caller.org_id, caller.email)
-    if used >= cap:
-        raise HTTPException(status_code=429, detail=(
-            f"daily usage limit reached ({used}/{cap}) — ask an admin to raise your cap"))
+    """The run surfaces' door to the per-user daily cap - the SAME gate `/call/` goes through
+    (`application/call/authorize.py`), so a member cannot dodge the cap by switching path. Commits,
+    because the gate takes the slot with a write and this request's session is the only owner."""
+    try:
+        await usage_policy.enforce_daily_cap(
+            caller, db, sandbox=demo_sandbox.is_sandbox(caller.org))
+    except usage_policy.UsagePolicyError as exc:
+        await db.commit()
+        raise HTTPException(status_code=429, detail=exc.detail) from exc
+    await db.commit()
 
 
 def _translate_call_failure(exc: CallFailure) -> HTTPException:

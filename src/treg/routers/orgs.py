@@ -709,6 +709,11 @@ async def set_member_cap(
     )).scalar_one_or_none()
     if membership is None:
         raise HTTPException(status_code=404, detail="not a member of this org")
+    if body.daily_call_cap >= 0 and membership.daily_call_cap < 0:
+        # Unlimited members are not counted on the call path; give the counter today's journal so a
+        # cap set mid-day starts from what they already used, not from zero.
+        user = await db.get(User, user_id)
+        await usage_policy.seed_counter(db, membership, user.email if user else "")
     membership.daily_call_cap = body.daily_call_cap
     await db.commit()
     return {"user_id": user_id, "org_id": org_id, "daily_call_cap": body.daily_call_cap}

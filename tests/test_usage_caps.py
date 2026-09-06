@@ -6,7 +6,8 @@ Soft by design (best-effort audit → fails open), so these tests seed records d
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import date, timedelta
+from pathlib import Path
 
 from httpx import AsyncClient
 from sqlmodel import select
@@ -64,22 +65,42 @@ async def test_unlimited_by_default(clients: AsyncClient):
         assert (await clients.get("/call/echo/anything")).status_code == 200
 
 
-async def test_runs_and_grants_count_toward_the_same_cap(clients: AsyncClient):
-    """A member can't dodge the cap by switching path: CallRecord (call+local) AND RunRecord (server)
-    both count. Seed one of each to reach cap=2, then a proxy call is refused."""
+async def _counter(org_id: int, email: str) -> tuple[int, date | None]:
+    async with session_maker() as s:
+        uid = (await s.execute(select(User.id).where(User.email == email))).scalar_one()
+        m = (await s.execute(select(Membership).where(
+            Membership.user_id == uid, Membership.org_id == org_id))).scalar_one()
+        return m.calls_today, m.calls_today_day
+
+
+async def _set_counter(org_id: int, email: str, n: int, day: date) -> None:
+    async with session_maker() as s:
+        uid = (await s.execute(select(User.id).where(User.email == email))).scalar_one()
+        m = (await s.execute(select(Membership).where(
+            Membership.user_id == uid, Membership.org_id == org_id))).scalar_one()
+        m.calls_today, m.calls_today_day = n, day
+        await s.commit()
+
+
+async def test_runs_and_calls_share_one_gate(clients: AsyncClient):
+    """A member can't dodge the cap by switching path: both run handlers in api.py go through the
+    same `_enforce_daily_cap` door as `/call/` (authorize.py), and that door is what moves the
+    counter. Pinned statically because the run surfaces need a bundle to exercise end to end."""
+    src = (Path(__file__).parents[1] / "src" / "treg" / "api.py").read_text()
+    assert src.count("await _enforce_daily_cap(caller, db)") == 2  # local-run grant + server run
     await _mk_echo_tool(clients)
     org_id = await _set_cap(2)
-    await _seed_call(org_id, "tim@superdesign.dev")  # 1 (a prior proxy/local event)
-    await _seed_run(org_id, "tim@superdesign.dev")   # 2 (a prior server run)
+    await _set_counter(org_id, "tim@superdesign.dev", 2, date.today())  # two prior events today
     blocked = await clients.get("/call/echo/anything")
-    assert blocked.status_code == 429  # used=2 (call+run) >= cap=2
+    assert blocked.status_code == 429 and "2/2" in blocked.json()["detail"]
+    assert await _counter(org_id, "tim@superdesign.dev") == (2, date.today())  # refused = not counted
 
 
 async def test_cap_is_per_member_not_global(clients: AsyncClient):
     """Capping one member must not affect another in the same org."""
     await _mk_echo_tool(clients)
     org_id = await _set_cap(1)
-    await _seed_call(org_id, "tim@superdesign.dev")  # tim is now at his cap
+    assert (await clients.get("/call/echo/anything")).status_code == 200  # tim is now at his cap
     # invite bob into the SAME org (default cap -1)
     code = (await clients.post(f"/orgs/{org_id}/invites", json={"email": "bob@x.io", "role": "member"})).json()["code"]
     btok = (await clients.post("/invites/accept", json={"code": code, "email": "bob@x.io"})).json()["token"]
@@ -92,8 +113,38 @@ async def test_cap_is_per_member_not_global(clients: AsyncClient):
 async def test_yesterdays_usage_does_not_count_today(clients: AsyncClient):
     await _mk_echo_tool(clients)
     org_id = await _set_cap(1)
-    await _seed_call(org_id, "tim@superdesign.dev", days_ago=1)  # yesterday — outside today's window
-    assert (await clients.get("/call/echo/anything")).status_code == 200  # today's count is still 0
+    await _set_counter(org_id, "tim@superdesign.dev", 1, date.today() - timedelta(days=1))  # yesterday's
+    assert (await clients.get("/call/echo/anything")).status_code == 200  # a new day starts from 0
+    assert await _counter(org_id, "tim@superdesign.dev") == (1, date.today())  # ...and this was its first
+    assert (await clients.get("/call/echo/anything")).status_code == 429
+
+
+async def test_setting_a_cap_seeds_the_counter_from_todays_journal(clients: AsyncClient):
+    """Unlimited members are not counted on the call path, so a cap set mid-day starts from what the
+    journal says they already used - not from zero."""
+    await _mk_echo_tool(clients)
+    org_id = await _get_org_id()
+    for _ in range(3):
+        assert (await clients.get("/call/echo/anything")).status_code == 200
+    await audit.drain()
+    await _seed_run(org_id, "tim@superdesign.dev")  # a server run counts too: 4 events in the journal
+    uid = [x["user_id"] for x in (await clients.get(f"/orgs/{org_id}/members")).json()
+           if x["email"] == "tim@superdesign.dev"][0]
+    assert (await clients.patch(f"/orgs/{org_id}/members/{uid}/cap", json={"daily_call_cap": 5})).status_code == 200
+    assert await _counter(org_id, "tim@superdesign.dev") == (4, date.today())
+    assert (await clients.get("/call/echo/anything")).status_code == 200  # 5th
+    assert (await clients.get("/call/echo/anything")).status_code == 429  # 6th
+
+
+async def test_counter_agrees_with_the_journal_after_real_calls(clients: AsyncClient):
+    await _mk_echo_tool(clients)
+    org_id = await _set_cap(10)
+    for _ in range(4):
+        assert (await clients.get("/call/echo/anything")).status_code == 200
+    await audit.drain()
+    async with session_maker() as s:
+        journal = await count_today(s, org_id, "tim@superdesign.dev")
+    assert await _counter(org_id, "tim@superdesign.dev") == (journal, date.today()) == (4, date.today())
 
 
 async def _get_org_id(email: str = "tim@superdesign.dev") -> int:
