@@ -471,6 +471,27 @@ the ALTER, both instances starved, and the shared Postgres stayed wedged until a
   Postgres only). A contended
   deploy therefore FAILS CLEANLY — prod keeps serving the old code — and the right response is to
   redeploy at a quieter moment, not to raise the timeout.
+  **The one sanctioned exception is `CREATE INDEX CONCURRENTLY`, and only in its own revision.**
+  The 5 s floor exists because an `ALTER` takes `ACCESS EXCLUSIVE`: it queues behind live traffic
+  and every new query then queues behind IT — the 2026-08-15 wedge. A concurrent index build is not
+  in that class. Its `SHARE UPDATE EXCLUSIVE` conflicts with neither `SELECT` nor
+  `INSERT`/`UPDATE`/`DELETE`; it blocks no reads or writes while it builds, and a statement WAITING
+  for it holds nothing and blocks nobody. What it does contend with is **autovacuum**, which takes
+  the same lock and runs constantly on a large, write-heavy table — 0020 died on
+  `LockNotAvailableError` in 5 s against exactly that, on the first try, at 00:37 UTC. Such a
+  revision raises both timeouts inside its `autocommit_block` and restores `env.py`'s values before
+  the block ends; it must not raise them for anything else in the same revision.
+  **A killed concurrent build leaves an INVALID index** — present in `pg_class`, unusable by the
+  planner, and never repaired — so a rebuilt-by-hand `IF NOT EXISTS` silently skips it and the scan
+  it was meant to remove stays, with nothing failing. 0020's first attempt left exactly that. Such a
+  revision therefore checks `pg_index.indisvalid` per index: valid ⇒ skip, invalid ⇒ drop
+  concurrently and rebuild, absent ⇒ build.
+  **Merging a revision breaks the crons before the web deploy applies it.** The three cron services
+  auto-deploy from `main` while the web service does not, so between the merge and the pre-deploy
+  they run new code against the old schema and `verify_db` refuses them (`Database schema revision
+  N is behind this build`). It is bounded and self-correcting, and it cannot be rolled back by
+  pinning a cron to the old commit — Render refuses `deploys create --commit` on a cron job. Deploy
+  the web service IMMEDIATELY after merging a revision, or revert the merge.
 - The pools are per instance and a rolling deploy runs two: keep the SUM of `pool_size +
   max_overflow` across every entry in `POOL_SPECS` such that DOUBLE it stays under the database
   plan's connection ceiling. A guard test pins this and counts all three deliberately — splitting
