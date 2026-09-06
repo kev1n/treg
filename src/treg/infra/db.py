@@ -128,6 +128,37 @@ if _is_sqlite:
     _admin_engine = _background_engine = _engine
 
 _engines = (_engine, _admin_engine, _background_engine)
+_POOL_NAMES = ("api", "admin", "background")
+
+
+def pool_snapshot() -> dict[str, dict[str, int]]:
+    """What each pool holds RIGHT NOW: connections checked out, of how many it may hand out.
+
+    The sizing question `POOL_SPECS` answers by arithmetic ("13 is the sum of the semaphores") can
+    only be settled by measurement; this is the measurement. `checked_out` counts slots in use
+    (persistent and overflow alike), `capacity` is `pool_size + max_overflow`. SQLite has no pool
+    worth reading and reports nothing. A pure read of SQLAlchemy's counters - no lock, no I/O.
+    """
+    if _is_sqlite:
+        return {}
+    out: dict[str, dict[str, int]] = {}
+    for name, engine in zip(_POOL_NAMES, _engines):
+        pool = engine.sync_engine.pool
+        checked_out = getattr(pool, "checkedout", None)
+        if checked_out is None:
+            continue
+        spec = POOL_SPECS[name]
+        out[name] = {"checked_out": int(checked_out()),
+                     "capacity": spec["pool_size"] + spec["max_overflow"]}
+    return out
+
+
+def fold_pool_peaks(peaks: dict[str, int], snapshot: dict[str, dict[str, int]]) -> dict[str, int]:
+    """Keep the per-pool maximum of `checked_out` seen across samples (the gauge's whole job)."""
+    for name, row in snapshot.items():
+        if row["checked_out"] > peaks.get(name, 0):
+            peaks[name] = row["checked_out"]
+    return peaks
 
 # The API pool: every request handler, through `get_session` or directly.
 session_maker = async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)

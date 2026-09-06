@@ -124,6 +124,27 @@ bound to a closed maintenance loop. Calling `maintenance.upgrade()` directly doe
   on 2026-09-06: against a database that is waiting on DISK (below), five more slots meant five
   more readers of the same cold pages, and the worst hour on record (2,136 pool faults at 11:00,
   on a third of the previous day's traffic) followed.
+- **The pools are measured, not argued about: `db_pool_gauge`.** `bootstrap.pool_gauge` samples
+  `infra/db.pool_snapshot()` once a second and emits one PostHog event a minute per instance:
+  `<pool>_peak` (most connections that pool had checked out in the minute), `<pool>_capacity`
+  (`pool_size + max_overflow`) and `<pool>_headroom`. Telemetry, not a database consumer, so it is
+  not in `ROLE_BACKGROUND_TASKS` and runs in every role. Read it like this: a pool whose peak sits
+  at capacity is one whose waiters are timing out (`api`: `503 treg_saturated`; `background`: an
+  audit or archive row dropped after `pool_timeout`); a pool whose peak never nears capacity is
+  holding connections nothing uses. **Resize from the gauge, never from the arithmetic** - the
+  arithmetic got both minor pools wrong once each (above), and the 2026-09-05 `api` raise made the
+  saturation it meant to fix worse. The protocol: one pool at a time, one override at a time, each
+  setting across at least one full daily peak (the 01:00-04:00 UTC batch window), judged by the same
+  hour on consecutive days on three numbers - db_pool faults, `/call/` 503 rate, and the gap between
+  `tool_called` events and `callrecord` rows (dropped audit). A change that raises the 503 rate at
+  equal traffic is reverted, not tuned around.
+
+    ```
+    SELECT toStartOfHour(timestamp) h, max(toFloat(properties.background_peak)) bg_peak,
+           any(properties.background_capacity) bg_cap, max(toFloat(properties.api_peak)) api_peak
+    FROM events WHERE event = 'db_pool_gauge' AND timestamp > now() - INTERVAL 2 DAY
+    GROUP BY h ORDER BY h DESC
+    ```
 - **No statement timeout yet.** The pools bound how many connections a class of work can hold, not
   how long a query may run; `alembic/env.py` still has the only timeouts in the app. Adding per-pool
   `statement_timeout` is deliberately a SEPARATE change: it is a behavior change on every query,

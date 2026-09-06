@@ -54,7 +54,8 @@ _FLUSH_INTERVAL_S = 2.0    # max staleness before a flush
 
 _flusher: asyncio.Task | None = None
 
-_SERVER_DISTINCT_ID = "treg-server"
+SERVER_DISTINCT_ID = "treg-server"
+_SERVER_DISTINCT_ID = SERVER_DISTINCT_ID  # older name, kept for callers
 _FAULT_VALUE_MAX = 500
 _FAULT_WINDOW_S = 10.0     # one event per (fault type, site) per window; the rest are counted
 _FAULT_MAX_KEYS = 500      # bound the ledger — it is what caps the cost, so it must be finite
