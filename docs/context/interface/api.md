@@ -246,10 +246,17 @@ validated before resolving the shared HTTP client. `/auth/logout` remains an HTT
   (`PATCH /orgs/{id}/members/{user}/cap`, admin+) sets `Membership.daily_call_cap` (`-1` = unlimited,
   rejects `< -1`). `my_usage` (`GET /usage/me`, any member) returns the caller's own `used_today` + `cap`.
   `list_members` also returns each member's `daily_call_cap` + `used_today`. **Enforcement:**
-  `_enforce_daily_cap` runs at the top of `call_tool`, `run_tool_server`, and `grant_local_run` (so no
-  path dodges the cap); `count_today` = today's `CallRecord` + `RunRecord` for the user. `-1` (default)
-  skips the count entirely (zero overhead); the sandbox is exempt. **Soft by design** - it counts the
-  best-effort `CallRecord`, so under load it fails *open*, never closed.
+  `governance/usage.enforce_daily_cap` runs in `/call/`'s authorization gate and, through
+  `routers/call._enforce_daily_cap`, at the top of `run_tool_server` and `grant_local_run` (so no path
+  dodges the cap). It takes the slot with ONE conditional UPDATE of `Membership.calls_today` /
+  `calls_today_day` (`take_daily_slot`, revision 0024): the WHERE is the check and the SET is the
+  count, so the cap is exact under concurrency, a refused event is not counted, and the first event of
+  a new UTC day starts from 1. `-1` (default) skips it entirely (zero overhead); the sandbox is
+  exempt; a database error fails *open* (a courtesy limit, not a money gate). `used_today` in the
+  roster and `/usage/me` still comes from the journal (`count_today` = today's `CallRecord` +
+  `RunRecord`), and `set_member_cap` copies that journal count onto the counter when a member goes
+  from unlimited to capped, so a cap set mid-day does not start from zero. Until 2026-09-06 the gate
+  itself ran that journal count - 2.8 s per call for a member with 110k rows that day.
 - **Super-admin (cross-tenant, `require_superadmin`):** `/admin/stats|orgs|orgs/{id}|users|tools|calls|
   errors|health` (reads - `errors` is failed calls across every credential tier with captured,
   admin-only request/response evidence, supports a `tier` filter, and runs the 14-day retention pass;
