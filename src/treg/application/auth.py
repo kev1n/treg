@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -871,9 +873,13 @@ async def _refresh_grant(*, refresh_token: str, client_id: str, resource: str) -
             # cost of being wrong is one sign-in; the cost of the other mistake is somebody's balance.
             killed = await _revoke_refresh_family(row.family_id, "reuse detected", db)
             await db.commit()
+            # `CallRecord` has no column for the family or the kill count; audit drops unknown
+            # telemetry keys with a warning on every occurrence, so they go to the log instead.
+            logging.getLogger("treg.auth").warning(
+                "refresh token reuse: family %s revoked (%s grants)", row.family_id, killed)
             audit.record_call(org_id=row.org_id, user_email="", tool_name="oauth.refresh_reuse",
                               method="POST", path="/oauth/token", status_code=400, client="",
-                              telemetry={"family": row.family_id, "revoked": killed})
+                              refused_by="auth")
             raise OAuthServerError(
                 "invalid_grant",
                 "this refresh token was already used — the grant has been revoked, sign in again",

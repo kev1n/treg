@@ -1972,7 +1972,9 @@ details.tl li.more a{color:var(--link);text-decoration:none}
 
 
 @app.get("/tools/{service}", include_in_schema=False)
-async def tools_provider(service: str, db: AsyncSession = Depends(get_session)):
+async def tools_provider(service: str, db: AsyncSession = Depends(get_session),
+                         observations: endpoint_stats.EndpointObservationReader = Depends(
+                             _endpoint_observation_reader)):
     """One provider's public page, in the use-case pages' skin (usecase.css): hero on the two
     measured terms — "{provider} api pricing" (what Search Console shows people typing) and
     "{provider} mcp" — the agent->treg->provider flow, setup (agent one-liner first), a prompt
@@ -2032,7 +2034,7 @@ async def tools_provider(service: str, db: AsyncSession = Depends(get_session)):
     badge = "YOUR ACCOUNT" if is_oauth else "NO SIGNUP"
     # The measured line: what treg.to has actually observed calling this provider. It is the one
     # thing a vendor's own pricing page cannot print, and it goes above the fold for that reason.
-    obs = await _observed_or_empty(db, [e["id"] for e in eps])
+    obs = await _observed_or_empty(observations, [e["id"] for e in eps])
     o_samples = sum(int(o.get("samples") or 0) for o in obs.values())
     # The provider-wide rate weights each endpoint's published rate by the calls that DECIDED it
     # (2xx + 5xx). `samples` still counts callers' 4xx, so weighting by it would let one team's

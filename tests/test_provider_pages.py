@@ -82,3 +82,14 @@ async def test_sitemap_and_catalog_link_every_provider_page(clients: AsyncClient
         assert f"/tools/{s}<" in sm, s
         assert f'href="/tools/{s}"' in cat, s
     assert "/pricing<" in sm
+
+
+async def test_provider_page_reads_the_observation_reader_not_the_session(clients, caplog):
+    """`/tools/{service}` once handed `_observed_or_empty` the request's AsyncSession instead of the
+    app's observation reader; the measured line silently came up empty and every page view logged
+    an AttributeError traceback (prod, 2026-09-06)."""
+    import logging
+    with caplog.at_level(logging.WARNING, logger="treg.catalog"):
+        r = await clients.get("/tools/dataforseo")
+    assert r.status_code == 200
+    assert "endpoint stats unavailable" not in caplog.text
