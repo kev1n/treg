@@ -82,6 +82,28 @@ bound to a closed maintenance loop. Calling `maintenance.upgrade()` directly doe
   (`audit.py` did, `archive.py` did not), while a pool bounds every module routed to it. Overflow
   is **0** on both minor pools for the same reason: it is the escape hatch a bulkhead must not have.
 
+  **Every number above is PER PROCESS, and the reference deployment runs two.** Render sets
+  `WEB_CONCURRENCY=2` on the web service's 2c-4g plan (not a dashboard variable - injected at
+  runtime, and absent on the crons) and uvicorn honors it: the boot log shows `Started parent
+  process` then two `Started server process` lines. Each worker opens its own three pools, runs its
+  own copy of every in-process background task (ads, archive refresh, prune, the gauge), and a
+  rolling deploy runs two instances for about a minute. So the budget is
+  `per_process × 2 workers × 2 instances` against `max_connections` (103 on the 1c-2g plan), and
+  `infra/db.connection_budget` logs it at boot:
+
+  | specs | per process | per instance | deploy peak | 103? |
+  |---|---|---|---|---|
+  | code defaults 15 + 3 + 13 | 31 | 62 | **124** | over |
+  | dashboard override 15 + 2 + 4 | 21 | 42 | 84 | fits |
+
+  That is the post-mortem of the 2026-09-04 defaults: `background = 13` did not overload the
+  database, it opened 124 connections at every deploy and restart until the override cut it to 84.
+  Every earlier passage in this file that multiplied by two instances only was counting half the
+  connections. Any resize must clear the deploy-peak column first; within it there are 2 spare
+  per process today (23 → 92), and the way to more is fewer consumers per process (batched audit
+  writes, smaller archive semaphores), `WEB_CONCURRENCY=1`, a larger database plan, or a pooler -
+  not a bigger number in the override.
+
   Two sizing rules, both learned by getting them wrong first:
 
   - **`background` is derived, not chosen.** `BACKGROUND_CONSUMERS` lists everything that can hold
@@ -119,11 +141,12 @@ bound to a closed maintenance loop. Calling `maintenance.upgrade()` directly doe
   is two bullets up. A `background` of 4 against 7 consumers needing 13 does not 503; it silently
   drops audit rows. The knob being a dashboard edit rather than a deploy is what makes it useful
   mid-incident and what lets it survive the fix. Today it reads
-  `admin.pool_size=2,background.pool_size=4`; the two stale entries are still there deliberately so
-  that one change at a time can be observed. `api.pool_size=10` was added on 2026-09-05 and removed
-  on 2026-09-06: against a database that is waiting on DISK (below), five more slots meant five
-  more readers of the same cold pages, and the worst hour on record (2,136 pool faults at 11:00,
-  on a third of the previous day's traffic) followed.
+  `admin.pool_size=2,background.pool_size=4` - and those two entries are no longer "stale": with
+  two uvicorn workers (§ above) they are what keeps a rolling deploy at 84 connections instead of
+  124, so removing them is not a cleanup, it is the 2026-09-04 outage again. `api.pool_size=10` was
+  added on 2026-09-05 and removed on 2026-09-06: against a database that is waiting on DISK (below),
+  five more slots meant five more readers of the same cold pages, and the worst hour on record
+  (2,136 pool faults at 11:00, on a third of the previous day's traffic) followed.
 - **The pools are measured, not argued about: `db_pool_gauge`.** `bootstrap.pool_gauge` samples
   `infra/db.pool_snapshot()` once a second and emits one PostHog event a minute per instance:
   `<pool>_peak` (most connections that pool had checked out in the minute), `<pool>_capacity`

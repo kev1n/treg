@@ -56,3 +56,12 @@ async def test_gauge_emits_one_event_per_window_with_peak_capacity_and_headroom(
     assert props["api_peak"] == 11 and props["api_capacity"] == 15 and props["api_headroom"] == 4
     assert props["background_peak"] == 13 and props["background_headroom"] == 0
     assert props["samples"] >= 3
+
+
+def test_connection_budget_multiplies_per_process_by_workers_and_the_deploy_overlap():
+    per_process = sum(s["pool_size"] + s["max_overflow"] for s in infra_db.POOL_SPECS.values())
+    one = infra_db.connection_budget(workers=1)
+    two = infra_db.connection_budget(workers=2)
+    assert one == {"per_process": per_process, "workers": 1,
+                   "per_instance": per_process, "deploy_peak": per_process * 2}
+    assert two["per_instance"] == per_process * 2 and two["deploy_peak"] == per_process * 4
