@@ -167,12 +167,17 @@ async def test_queued_worker_rows_are_not_claimed_before_a_poll_slot(
         await tick
 
 
-@pytest.mark.parametrize("deadline", ["POLL_TIMEOUT_S", "PROCESS_TIMEOUT_S"])
+# POLL_TIMEOUT_S wraps only the upstream poll, so it can be near-zero. PROCESS_TIMEOUT_S also
+# wraps the claim's own DB round trip: at 10 ms a loaded CI runner fires it BEFORE the claim,
+# which is correctly reported as backed_off with the row untouched - and then this test, which
+# wants the post-claim path, fails on `consecutive_failures == 1`. Give the claim room; the hung
+# poll is what the deadline must cut, and it never returns regardless.
+@pytest.mark.parametrize("deadline, seconds", [("POLL_TIMEOUT_S", 0.01), ("PROCESS_TIMEOUT_S", 0.5)])
 async def test_worker_bounds_whole_poll_and_keeps_hold_on_timeout(
-    clients: AsyncClient, monkeypatch, replicate_platform, deadline,
+    clients: AsyncClient, monkeypatch, replicate_platform, deadline, seconds,
 ):
     call_id = await _due_submission(clients, monkeypatch, {})
-    monkeypatch.setattr(task_app, deadline, 0.01)
+    monkeypatch.setattr(task_app, deadline, seconds)
     async def hangs(row, client):
         await asyncio.Event().wait()
     monkeypatch.setattr(task_app, "_poll", hangs)
