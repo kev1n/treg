@@ -18,6 +18,8 @@ sources:
   - src/treg/alembic/versions/0019_async_poll_failures.py
   - src/treg/alembic/versions/0020_callrecord_created_at_indexes.py
   - src/treg/alembic/versions/0021_ledgerentry_org_created_at_index.py
+  - src/treg/alembic/versions/0022_org_spent_today_counter.py
+  - src/treg/alembic/versions/0023_callrecord_org_user_created_at_index.py
   - src/treg/alembic/versions/0011_callrecord_archive_link.py
   - src/treg/alembic/versions/0015_idempotentcall_membership_cascade.py
   - src/treg/maintenance.py
@@ -161,8 +163,15 @@ uses this metadata, never the encrypted token's shape.
   buffer touches per call, 56-106 s once the day's pages had been evicted from a 512 MB cache, and
   the heap had read 6.5 BILLION blocks - four times `callrecord`. Revision 0021 adds
   `(org_id, created_at)`, which also serves `entries_of` (the `/billing` page, previously a
-  backward walk of the whole `created_at` index). The remaining cost is O(rows this org wrote
-  today); a per-org daily counter is the structural follow-up.
+  backward walk of the whole `created_at` index). That fixed light orgs and `/billing` but not the
+  two orgs writing half the day - their rows are on every page of the day, and the planner kept
+  walking it (395k buffer touches per call after 0021). So the cap no longer reads this table at
+  all: revision 0022 adds `Org.spent_today_micro` / `spent_today_day`, kept by `domain/money`
+  inside the balance UPDATE and read with one primary-key lookup; the journal aggregate survives
+  as `spent_today_from_ledger` for reconciliation. The same shape on `callrecord` - the per-user
+  daily call cap, `count_today`, which BitmapAnd-ed a member's whole history through
+  `ix_callrecord_user_email` (2.6 s of 3.0 s for a 287k-row member) - gets
+  `(org_id, user_email, created_at)` in revision 0023.
 
   `refused_by` distinguishes a treg refusal (`auth`, `policy`, `balance`, `cap`, `resolution`,
   `request`, and other mechanism-specific values) from an upstream answer, where it is null.

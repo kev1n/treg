@@ -46,7 +46,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import NamedTuple
 
-from sqlalchemy import delete, func, update
+from sqlalchemy import case, delete, func, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -125,11 +125,38 @@ async def _entry(
     return row
 
 
-async def _add_balance(db: AsyncSession, org_id: int, delta_micro: int) -> None:
-    """Unconditional balance move (grants, refunds). The CONDITIONAL one lives in `reserve`."""
-    await db.execute(
-        update(Org).where(Org.id == org_id).values(balance_micro=Org.balance_micro + delta_micro)
-    )
+def _day_start() -> datetime:
+    return _now().replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _spent_today_values(delta_micro: int) -> dict:
+    """SET clause that folds `delta_micro` into the org's daily-spend counter.
+
+    The counter is "committed since midnight UTC": settled today plus still held from today. One
+    CASE keeps it honest across the day boundary - the first movement of a new UTC day resets it
+    to that movement instead of adding to yesterday's total. Always applied inside the statement
+    that already holds the org row (the balance UPDATE), so it costs no extra lock and cannot
+    disagree with the balance about which transaction it belongs to.
+    """
+    today = _now().date()
+    return {
+        "spent_today_micro": case(
+            (Org.spent_today_day == today, Org.spent_today_micro + delta_micro), else_=delta_micro),
+        "spent_today_day": today,
+    }
+
+
+async def _add_balance(db: AsyncSession, org_id: int, delta_micro: int, *,
+                       spent_delta_micro: int = 0) -> None:
+    """Unconditional balance move (grants, refunds). The CONDITIONAL one lives in `reserve`.
+
+    `spent_delta_micro` rides in the same UPDATE: settle and release move the balance AND change
+    what counts as committed today, and the two must land in one statement.
+    """
+    values: dict = {"balance_micro": Org.balance_micro + delta_micro}
+    if spent_delta_micro:
+        values.update(_spent_today_values(spent_delta_micro))
+    await db.execute(update(Org).where(Org.id == org_id).values(**values))
 
 
 # ---- funding -----------------------------------------------------------------------------------
@@ -265,7 +292,7 @@ async def reserve_in_transaction(
         # callers cannot both pass it. rowcount 0 = the balance was not there.
         update(Org)
         .where(Org.id == org_id, Org.balance_micro >= charged)
-        .values(balance_micro=Org.balance_micro - charged)
+        .values(balance_micro=Org.balance_micro - charged, **_spent_today_values(charged))
     )
     if result.rowcount != 1:
         balance = (await db.execute(select(Org.balance_micro).where(Org.id == org_id))).scalar() or 0
@@ -295,6 +322,7 @@ class _ClaimedHold(NamedTuple):
     amount_micro: int
     org_id: int
     endpoint_id: str
+    created_at: datetime
 
 
 async def _claim_hold(db: AsyncSession, call_id: str) -> _ClaimedHold | None:
@@ -312,7 +340,7 @@ async def _claim_hold(db: AsyncSession, call_id: str) -> _ClaimedHold | None:
     hold = await db.get(Hold, call_id)
     if hold is None:
         return None
-    claimed = _ClaimedHold(hold.amount_micro, hold.org_id, hold.endpoint_id)
+    claimed = _ClaimedHold(hold.amount_micro, hold.org_id, hold.endpoint_id, hold.created_at)
     result = await db.execute(delete(Hold).where(Hold.id == call_id))
     if result.rowcount != 1:
         # Lost the claim: somebody else is closing this hold. Deliberately NO rollback — the DELETE
@@ -365,8 +393,11 @@ async def _settle_in_transaction(
     # The hold came out of the balance at reserve time; give back whatever the call didn't use. If the
     # observed cost overran the estimate the delta is negative, which correctly takes MORE balance —
     # the next reserve is the gate that stops an overrun from compounding.
-    if reserved != consumed:
-        await _add_balance(db, hold.org_id, reserved - consumed)
+    # The daily counter: what settled today goes in; the hold it replaces comes out, but only if
+    # that hold was counted today (a hold opened yesterday was yesterday's commitment).
+    spent_delta = consumed - (reserved if hold.created_at >= _day_start() else 0)
+    if reserved != consumed or spent_delta:
+        await _add_balance(db, hold.org_id, reserved - consumed, spent_delta_micro=spent_delta)
     await _entry(
         db, org_id=hold.org_id, kind="settle", amount_micro=-consumed, call_id=call_id,
         endpoint_id=hold.endpoint_id, created_at=settled_at,
@@ -416,7 +447,9 @@ async def _release_in_transaction(
     if hold is None:
         return 0, False
     amount = hold.amount_micro
-    await _add_balance(db, hold.org_id, amount)
+    # Same rule as settle: a hold counted today leaves today's counter; an older one never was in it.
+    spent_delta = -amount if hold.created_at >= _day_start() else 0
+    await _add_balance(db, hold.org_id, amount, spent_delta_micro=spent_delta)
     await _entry(db, org_id=hold.org_id, kind="release", amount_micro=amount, call_id=call_id,
                  endpoint_id=hold.endpoint_id, meta={**(meta or {}), "reason": reason})
     # Nothing was billable, so nothing is attributable: the tag rows go with the hold. Leaving them
@@ -485,18 +518,33 @@ async def reap_stale_holds(db: AsyncSession, *, org_id: int | None = None, limit
 # ---- reads -------------------------------------------------------------------------------------
 async def spent_today(db: AsyncSession, org_id: int) -> int:
     """Micro-USD this org has committed since midnight UTC: everything SETTLED today plus everything
-    still HELD from today. Two aggregates, and the number a daily spend cap is checked against.
+    still HELD from today - the number a daily spend cap is checked against.
 
-    Runs on EVERY metered call, inside the reserve transaction, on an api-pool connection - so its
-    cost is the platform's throughput. Both range over `(org_id, created_at)`; without that pair
-    (revision 0021) the ledger half scanned the whole platform's day per call and stalled the API
-    pool whenever the day's pages left the buffer cache. Still O(rows this org wrote today), which
-    is why a per-org daily counter is the next step, not a bigger pool.
+    Runs on EVERY metered call, inside the reserve transaction, on an api-pool connection, so its
+    cost is the platform's throughput: ONE primary-key read of the org row. The counter is kept by
+    reserve/settle/release inside the balance UPDATE (`_spent_today_values`); it was an aggregate
+    over `ledgerentry` until 2026-09-06, when that aggregate - O(rows the platform wrote today) for
+    a heavy org, whatever the index - was what emptied the API pool. `spent_today_from_ledger` is
+    the same number from the journal, for reconciliation.
 
     Deliberately not "sum of reserve entries": a reserve is refunded at settle, so counting both would
     double-charge every call. Settled + still-open is exactly the money that is gone or promised.
     """
-    since = _now().replace(hour=0, minute=0, second=0, microsecond=0)
+    row = (await db.execute(
+        select(Org.spent_today_micro, Org.spent_today_day).where(Org.id == org_id))).one_or_none()
+    if row is None or row[1] != _now().date():
+        return 0  # nothing has moved for this org today; the first movement will stamp the day
+    return int(row[0])
+
+
+async def spent_today_from_ledger(db: AsyncSession, org_id: int) -> int:
+    """The same number computed from the journal - two range aggregates over `(org_id, created_at)`.
+
+    NOT on the call path. This is the reconciliation view of the counter: what `spent_today` must
+    agree with, and what a test asserts it against. `reconcile.py` and an operator who distrusts
+    the counter read this; a bigger cap check does not.
+    """
+    since = _day_start()
     settled = (await db.execute(
         select(func.coalesce(func.sum(LedgerEntry.amount_micro), 0)).where(
             LedgerEntry.org_id == org_id, LedgerEntry.kind == "settle", LedgerEntry.created_at >= since)

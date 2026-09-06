@@ -8,7 +8,7 @@ so every list/call/mutation is scoped to the caller's org. See docs/MULTI-TENANC
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy import BigInteger, JSON, Column, Index, Integer, UniqueConstraint, text
 from sqlmodel import Field, SQLModel
@@ -44,6 +44,14 @@ class Org(SQLModel, table=True):
     # conditional UPDATE against this integer is what stops concurrent agent calls racing past zero
     # (see ledger.reserve). Only `domain/money` may write it.
     balance_micro: int = Field(default=0)
+    # "Committed since midnight UTC": everything settled today plus everything still held from
+    # today - the number the fail-closed daily cap is checked against on EVERY metered call. Kept
+    # here, in the same UPDATE that moves the balance, because the equivalent aggregate over
+    # `ledgerentry` cost a scan of the platform's whole day per call and emptied the API pool
+    # (revision 0022). Written ONLY by domain/money; `spent_today_day` says which UTC day the
+    # counter belongs to, and a movement on a later day resets it.
+    spent_today_micro: int = Field(default=0, sa_column=Column("spent_today_micro", BigInteger, nullable=False, server_default="0"))
+    spent_today_day: date | None = Field(default=None)
 
     # ---- Stripe billing (see billing.py; NO card data ever lands here) ----------------------------
     # The org's Stripe Customer. Created lazily on the first top-up and reused forever after, because
@@ -248,6 +256,12 @@ class CallRecord(SQLModel, table=True):
                       # every 3 ms request query queue behind it until `pool_timeout` fires and
                       # callers get `503 treg_saturated`. Sizing the pool cannot fix a scan.
                       Index("ix_callrecord_endpoint_id_created_at", "endpoint_id", "created_at"),
+                      # The per-user daily call cap (`governance/usage.count_today`, on every
+                      # capped call): "this org, this member, since midnight". Without the triple
+                      # the planner BitmapAnd-ed the member's WHOLE history through
+                      # `ix_callrecord_user_email` - measured 2.6 s of 3.0 s on prod 2026-09-06 for
+                      # a member with 287k rows. Revision 0023 builds it concurrently.
+                      Index("ix_callrecord_org_id_user_email_created_at", "org_id", "user_email", "created_at"),
                       Index("ix_callrecord_org_id_created_at", "org_id", "created_at"),)
 
     id: int | None = Field(default=None, primary_key=True)

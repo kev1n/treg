@@ -162,7 +162,10 @@ bound to a closed maintenance loop. Calling `maintenance.upgrade()` directly doe
   blocks, four times `callrecord`). Whenever a large scan evicts the day's ledger pages - the
   30-day observation refresh, the `/billing` page's backward index walk, the per-call
   `idempotentcall` sweep, a concurrent index build - every in-flight `spent_today` stalls together
-  for tens of seconds, and 20 slots are gone. Two lessons: **sample `wait_event_type`, not
+  for tens of seconds, and 20 slots are gone. 0021 fixed light orgs and `/billing` only: the two
+  orgs writing half the day sit on every page of the day and the planner kept walking it, so
+  revision 0022 moved the cap to a counter on the org row (one primary-key read) and 0023 gave the
+  per-user cap its triple on `callrecord`. Two lessons: **sample `wait_event_type`, not
   latency**, and on a disk-bound database a bigger pool is more contention, not more throughput.
 - **SQLite aliases all three to one engine.** It has no pool to protect and file-level write locks
   it cannot share, so three engines against one file would only manufacture "database is locked".
