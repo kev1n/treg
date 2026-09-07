@@ -64,6 +64,10 @@ bounded runs exit nonzero so cron failures are visible. Render serializes runs o
 Retention uses the existing table and primary key; it requires no migration or web-service restart.
 Use ordinary, throttled `VACUUM (ANALYZE, TRUNCATE FALSE) idempotentcall` after a large manual
 backlog cleanup if needed; routine hourly cleanup leaves vacuuming to Postgres autovacuum.
+Check old `pg_stat_activity.backend_xmin` snapshots when dead tuples persist after vacuum:
+a long-running read-only report blocked reclamation during the September 2026 cleanup.
+Verify the query and transaction before canceling a stale report, then vacuum again and check
+dead-tuple statistics. Ordinary vacuum makes space reusable without shrinking the table file.
 
 ## Schema upgrade safety
 - **Alembic is authoritative:** migration scripts ship inside `src/treg/alembic/` in the wheel.
