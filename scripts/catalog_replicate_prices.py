@@ -255,8 +255,10 @@ def main(argv: list[str]) -> int:
             continue
         try:
             billing = fetch_billing(endpoint["name"])
-        except Exception as exc:  # a fetch failure must never write a price
-            skipped.append((endpoint["id"], f"fetch failed: {exc}"))
+        except Exception:  # a fetch failure must never write a price
+            # Do not interpolate the exception: CodeQL treats HTTP-derived
+            # text as sensitive, and the page body can leak into urllib errors.
+            skipped.append((endpoint["id"], "fetch failed"))
             continue
         result = priced_cost(endpoint, billing, checked)
         if isinstance(result, str):
@@ -275,10 +277,13 @@ def main(argv: list[str]) -> int:
             if args.test_requests and "test_request" not in endpoint and required == {"prompt"}:
                 endpoint["test_request"] = {"body": {"input": {"prompt": TEST_PROMPT}}}
 
-    for eid, summary in priced:
-        print(f"priced    {eid}: {summary}")
-    for eid, reason in skipped:
-        print(f"skipped   {eid}: {reason}")
+    # Log only catalog ids (local YAML). Rate summaries and skip reasons are
+    # derived from the fetched model page, which CodeQL classifies as private;
+    # printing them trips py/clear-text-logging-sensitive-data on CI.
+    for eid, _summary in priced:
+        print(f"priced    {eid}")
+    for eid, _reason in skipped:
+        print(f"skipped   {eid}")
     print(f"\n{len(priced)} priced, {len(skipped)} skipped (skipped rows stay BYOK-only)")
 
     if priced and not args.check:
