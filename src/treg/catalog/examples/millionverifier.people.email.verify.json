@@ -1,0 +1,16 @@
+{
+  "email": "test@example.com",
+  "quality": "good",
+  "result": "ok",
+  "resultcode": 1,
+  "subresult": "ok",
+  "free": false,
+  "role": false,
+  "didyoumean": "",
+  "credits": 0,
+  "executiontime": 0,
+  "error": "",
+  "livemode": false,
+  "_scrubbed": true,
+  "_note": "Shape from MillionVerifier demo key API_KEY_FOR_OK on 2026-09-07 (livemode=false). Not a live-billed observation — replace after TREG_CATALOG_CRED verify."
+}

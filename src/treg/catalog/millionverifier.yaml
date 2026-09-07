@@ -1,25 +1,30 @@
 provider: millionverifier
 source:
   docs: https://developer.millionverifier.com/
-  openapi: https://developer.millionverifier.com/  # ReDoc OpenAPI 3.1.0 surface; Single API base https://api.millionverifier.com
+  openapi: null # ReDoc at developer.millionverifier.com publishes OpenAPI 3.1.0 in-browser; no stable fetchable openapi.json URL
   curated: '2026-09-07'
-# Email verification specialist. Auth for the Single API is query `api=` (documented). Live probe
+# Email-verification specialist. Auth for the Single API is query `api=` (documented). Live probe
 # 2026-09-07: GET /api/v3/credits?api=<garbage> → HTTP 200 {"result":"error","error":"apikey_not_found"};
 # a valid key returns {"credits":…,"bulk_credits":…,"renewing_credits":…,"plan":…} with no error field.
-# Docs also expose demo keys such as API_KEY_FOR_ERROR_INVALID_APIKEY that flip the same error field.
+# Docs demo keys (API_KEY_FOR_OK / API_KEY_FOR_CATCH_ALL / API_KEY_FOR_ERROR_INVALID_APIKEY, …) flip
+# fixed shapes for development; those responses carry livemode=false and are not a real meter.
 #
-# Billing (public packs, credits never expire):
-#   10,000 credits $39 → $0.0039/email (upper bound used below)
+# Billing (public pay-as-you-go packs on https://www.millionverifier.com/, credits never expire):
+#   10,000 credits $39 → $0.0039/email (upper bound used in fx.yaml)
 #   50,000 credits $89 → $0.00178/email
 #   100,000 credits $149 → $0.00149/email
-# Single API: charged for ok / invalid / disposable; catch-all and unknown are NOT charged by default
-# (risky goodwill; misuse accounts may lose the refund — see MillionVerifier help).
+#   1,000,000 credits $449 → $0.000449/email
+# Single API: 1 credit per email is deducted; catch-all and unknown are refunded by default
+# (risky goodwill — see https://help.millionverifier.com/payments-credits/refund-for-risky-emails).
+# Misuse accounts may lose the refund. Charged results: ok / invalid / disposable.
 #
-# Bulk file API lives on https://bulkapi.millionverifier.com and authenticates with query `key=`
-# (not `api=`). Deferred from this core file so the registry's single query-param transport stays
-# honest — list bulk once a second host/auth binding is supported.
+# Full-surface map (conservative):
+#   catalogued — GET /api/v3/ (verify) and GET /api/v3/credits (probe)
+#   deferred — Bulk API on https://bulkapi.millionverifier.com (upload/fileinfo/filelist/download/
+#   stop/delete) authenticates with query `key=` (not `api=`) on a second host; deferred so the
+#   registry's single query-param transport stays honest.
 #
-# Rate limit (Single API): 160 requests/second per account (vendor help).
+# Rate limit (Single API): ~160 requests/second per account (vendor help).
 
 limits: "Single API ~160 requests/second per account (vendor-documented, account-scoped)"
 pricing_url: https://www.millionverifier.com/
@@ -37,20 +42,21 @@ endpoints:
       queryParams:
         email: {type: string, required: true, note: "the address to verify (URL-encode special characters)", example: "test@example.com"}
         timeout: {type: integer, required: false, note: "seconds to wait for the recipient server, 2-60, default 20", example: 10}
-      note: "returns result (ok | catch_all | unknown | error | disposable | invalid), resultcode 1-6, quality (good | risky | bad), free/role flags, didyoumean, credits remaining, and error. Auth rides as query api= (injected by treg). Demo keys such as API_KEY_FOR_OK / API_KEY_FOR_CATCH_ALL return fixed shapes for development"
+      note: "returns result (ok | catch_all | unknown | error | disposable | invalid), resultcode 1-6, quality (good | risky | bad), free/role flags, didyoumean, credits remaining, and error. Auth rides as query api= (injected by treg)"
     test_request:
       queryParams: {email: "test@example.com", timeout: 10}
     cost:
       type: per_success
-      value: 0.0039
-      currency: USD
+      value: 1
+      currency: credit
       per: 1
       unit: call
       source: docs
       source_url: https://www.millionverifier.com/
       checked: '2026-09-07'
       confidence: documented
-      note: "1 credit per charged verification at the public 10k pack rate ($39/10,000 = $0.0039). Charged for ok, invalid and disposable; catch-all and unknown are free on the Single API by default (vendor goodwill). Larger packs are cheaper per credit ($0.00178 at 50k, $0.00149 at 100k). Live meter confirmation still needs TREG_CATALOG_CRED."
+      note: "1 credit per charged verification. USD via fx.yaml at the public 10k pack upper bound ($39/10,000 = $0.0039). Charged for ok, invalid and disposable; catch-all and unknown are free by default (vendor goodwill refund). Larger packs are cheaper per credit ($0.00178 at 50k, $0.00149 at 100k, $0.000449 at 1M). Live meter confirmation still needs TREG_CATALOG_CRED."
+    example_response: examples/millionverifier.people.email.verify.json
     docs_url: https://developer.millionverifier.com/
 
   - id: millionverifier.account.usage
