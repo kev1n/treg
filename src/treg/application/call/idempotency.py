@@ -234,6 +234,11 @@ class IdempotencyPruneResult:
     deleted: int
     batches: int
     complete: bool
+    page_timeouts: int = 0
+
+
+_PAGE_TIMEOUT_S = 60
+_DELETE_TIMEOUT_S = 15
 
 
 async def prune_expired_idempotency(*, batch_size: int = 200, pause_s: float = 0.25,
@@ -245,19 +250,35 @@ async def prune_expired_idempotency(*, batch_size: int = 200, pause_s: float = 0
     history to find one expired row. The primary-key cursor bounds each page without a migration.
     Concurrent caller cleanup is harmless: the DELETE repeats the eligibility predicate.
     Pending claims and responses valid at the start of the sweep cannot be removed.
+
+    **Timeout resilience.** After a large first prune (or any mass delete), dead tuple bloat can
+    make even a bounded page SELECT slow: the executor must skip invisible rows to find N visible
+    ones. The page SELECT uses a 60s timeout; if that expires, the cursor advances by batch_size
+    (the page is skipped, not retried) and the sweep continues. The next cron run starts from the
+    front, so skipped pages are retried on fresh autovacuum state. A single page timeout is not a
+    run failure; the run fails only when every remaining page times out consecutively.
+
+    Ops note: after a large initial prune, run `VACUUM (ANALYZE) idempotentcall` once. Autovacuum
+    handles routine churn; manual vacuum is only needed after an abnormally large delete ratio.
     """
     if not 1 <= batch_size <= 1000 or not 1 <= max_batches <= 10000:
         raise ValueError("batch_size must be 1..1000 and max_batches must be 1..10000")
     if not 0 <= pause_s <= 60:
         raise ValueError("pause_s must be 0..60")
+    log = logging.getLogger("treg.idempotency")
 
-    async def bound(db):
+    async def bound_page(db):
         if db.bind.dialect.name == "postgresql":
             await db.execute(text("SET LOCAL lock_timeout = '1s'"))
-            await db.execute(text("SET LOCAL statement_timeout = '15s'"))
+            await db.execute(text(f"SET LOCAL statement_timeout = '{_PAGE_TIMEOUT_S}s'"))
+
+    async def bound_delete(db):
+        if db.bind.dialect.name == "postgresql":
+            await db.execute(text("SET LOCAL lock_timeout = '1s'"))
+            await db.execute(text(f"SET LOCAL statement_timeout = '{_DELETE_TIMEOUT_S}s'"))
 
     async with make_session() as db:
-        await bound(db)
+        await bound_page(db)
         cutoff = (await db.scalar(select(func.current_timestamp()))).replace(tzinfo=None)
         upper_id = (await db.scalar(select(func.max(IdempotentCall.id)))) or 0
         eligible_where = (
@@ -265,37 +286,61 @@ async def prune_expired_idempotency(*, batch_size: int = 200, pause_s: float = 0
             IdempotentCall.expires_at < cutoff,
             IdempotentCall.id <= upper_id,
         )
-    cursor = eligible = deleted = batches = 0
+    cursor = eligible = deleted = batches = page_timeouts = 0
+    consecutive_timeouts = 0
     complete = False
     while batches < max_batches:
-        async with make_session() as db:
-            await bound(db)
-            # Select metadata only: never load the response body to decide retention.
-            rows = (await db.execute(select(
-                IdempotentCall.id, IdempotentCall.status, IdempotentCall.expires_at,
-            ).where(
-                IdempotentCall.id <= upper_id, IdempotentCall.id > cursor,
-            ).order_by(IdempotentCall.id).limit(batch_size))).all()
-            if not rows:
-                complete = True
-                break
-            ids = [row.id for row in rows if row.status == "done" and row.expires_at < cutoff]
-            eligible += len(ids)
-            if ids and not dry_run:
+        rows = None
+        try:
+            async with make_session() as db:
+                await bound_page(db)
+                rows = (await db.execute(select(
+                    IdempotentCall.id, IdempotentCall.status, IdempotentCall.expires_at,
+                ).where(
+                    IdempotentCall.id <= upper_id, IdempotentCall.id > cursor,
+                ).order_by(IdempotentCall.id).limit(batch_size))).all()
+        except Exception as exc:
+            is_timeout = "statement timeout" in str(exc).lower() or "QueryCanceledError" in type(exc).__name__
+            if is_timeout:
+                page_timeouts += 1
+                consecutive_timeouts += 1
+                log.warning(
+                    "idempotency prune page timeout: cursor=%d batch_size=%d consecutive=%d (advancing)",
+                    cursor, batch_size, consecutive_timeouts)
+                cursor += batch_size
+                batches += 1
+                if cursor >= upper_id:
+                    complete = True
+                    break
+                if consecutive_timeouts >= 3:
+                    log.error("idempotency prune: %d consecutive page timeouts, stopping", consecutive_timeouts)
+                    break
+                await asyncio.sleep(pause_s)
+                continue
+            raise
+        consecutive_timeouts = 0
+        if not rows:
+            complete = True
+            break
+        ids = [row.id for row in rows if row.status == "done" and row.expires_at < cutoff]
+        eligible += len(ids)
+        if ids and not dry_run:
+            async with make_session() as db:
+                await bound_delete(db)
                 removed = (await db.execute(delete(IdempotentCall).where(
                     *eligible_where, IdempotentCall.id.in_(ids),
                 ).returning(IdempotentCall.id))).all()
                 await db.commit()
                 deleted += len(removed)
-            cursor = rows[-1].id
-            batches += 1
-            complete = len(rows) < batch_size or cursor == upper_id
-        # No connection is held during the throttle pause.
+        cursor = rows[-1].id
+        batches += 1
+        complete = len(rows) < batch_size or cursor == upper_id
         if batches % 50 == 0:
-            logging.getLogger("treg.idempotency").info(
-                "idempotency prune: batches=%d deleted=%d cursor=%d", batches, deleted, cursor)
+            log.info(
+                "idempotency prune: batches=%d deleted=%d cursor=%d timeouts=%d",
+                batches, deleted, cursor, page_timeouts)
         if complete:
             break
         await asyncio.sleep(pause_s)
 
-    return IdempotencyPruneResult(cutoff, upper_id, eligible, deleted, batches, complete)
+    return IdempotencyPruneResult(cutoff, upper_id, eligible, deleted, batches, complete, page_timeouts)

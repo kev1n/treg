@@ -58,14 +58,29 @@ Render starter cron, using only the database URL and the secret key needed by `v
 It runs independently of web workers and holds at most one database connection at a time.
 The command defaults to 200 rows per committed batch, a 250 ms pause outside the session, and
 10,000 batches maximum. `--dry-run` prints the fixed cutoff, upper ID and eligible count without
-writing; the final JSON includes eligible and deleted rows, batches and traversal completion. Counts
-accumulate from bounded metadata pages rather than full-table queries. Incomplete
-bounded runs exit nonzero so cron failures are visible. Render serializes runs of this cron.
+writing; the final JSON includes eligible and deleted rows, batches, traversal completion, and
+page_timeouts. Counts accumulate from bounded metadata pages rather than full-table queries.
+Incomplete bounded runs exit nonzero so cron failures are visible. Render serializes runs of this cron.
 Retention uses the existing table and primary key; it requires no migration or web-service restart.
-Use ordinary, throttled `VACUUM (ANALYZE, TRUNCATE FALSE) idempotentcall` after a large manual
-backlog cleanup if needed; routine hourly cleanup leaves vacuuming to Postgres autovacuum.
-Check old `pg_stat_activity.backend_xmin` snapshots when dead tuples persist after vacuum:
-a long-running read-only report blocked reclamation during the September 2026 cleanup.
+
+**Timeout resilience.** The page SELECT uses a 60s statement timeout; the DELETE uses 15s. After a
+large first prune or any mass delete, dead tuple bloat can make even a bounded page SELECT slow
+(the executor skips invisible rows to find N visible ones). A single page timeout does not fail the
+run: the cursor advances by batch_size (the page is skipped) and the sweep continues. The next cron
+run starts from the front, retrying skipped pages against fresh autovacuum state. Three consecutive
+timeouts do stop the run to prevent infinite loops. The `page_timeouts` field in the result JSON
+tracks how many pages were skipped, useful for alerting on persistent bloat.
+
+**VACUUM after large prunes.** Routine hourly cleanup stays within autovacuum thresholds. After an
+abnormally large delete ratio (e.g. an initial backlog prune removing tens of thousands of rows),
+manually run `VACUUM (ANALYZE) idempotentcall` once. This reclaims dead tuple space and updates
+planner statistics so subsequent page SELECTs do not need to skip many invisible rows. The code
+tolerates some bloat via the 60s timeout and cursor-advance retry, but persistent bloat degrades
+throughput. A one-time manual VACUUM is the proper fix; the code does not depend on it to avoid
+alerts — it survives bloat, but bloat is not the intended steady state.
+
+**Snapshot blockers.** Check old `pg_stat_activity.backend_xmin` snapshots when dead tuples persist
+after vacuum: a long-running read-only report blocked reclamation during the September 2026 cleanup.
 Verify the query and transaction before canceling a stale report, then vacuum again and check
 dead-tuple statistics. Ordinary vacuum makes space reusable without shrinking the table file.
 

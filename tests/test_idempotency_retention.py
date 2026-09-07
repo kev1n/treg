@@ -2,6 +2,7 @@
 import pytest
 from sqlalchemy import delete, event, func
 from sqlmodel import select
+from unittest.mock import AsyncMock, patch
 
 from treg.application.call import idempotency
 from treg.infra.db import session_maker
@@ -162,3 +163,88 @@ async def test_partial_sweep_exits_nonzero_without_final_count(clients, capsys, 
     async with session_maker() as db:
         count = await db.scalar(select(func.count()).select_from(IdempotentCall))
     assert count == 6, "remaining rows from incomplete sweep"
+
+
+async def test_page_timeout_advances_cursor_and_continues(clients, monkeypatch):
+    """A single page timeout must not fail the sweep: cursor advances and run continues.
+
+    After a large prune with many dead tuples, the index scan finding N visible rows can
+    timeout even with a bounded WHERE. The fix: skip the page (advance cursor by batch_size)
+    and continue. The next cron run starts from the front, catching any skipped rows after
+    autovacuum cleans the bloat. Consecutive timeouts (3+) do fail the run to avoid infinite
+    loops on persistent issues.
+
+    Contract: page_timeouts counts skipped pages; a single timeout does not set complete=False
+    unless the sweep genuinely cannot finish.
+    """
+    for n in range(6):
+        await _seed_answer(clients, f"expired-{n}", ttl_s=-3600)
+
+    class FakeQueryCanceledError(Exception):
+        pass
+
+    call_count = 0
+    original_session_maker = idempotency.session_maker
+
+    async def timeout_first_page():
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:
+            raise FakeQueryCanceledError("statement timeout")
+        async with original_session_maker() as db:
+            yield db
+
+    from contextlib import asynccontextmanager
+    timeout_maker = asynccontextmanager(timeout_first_page)
+
+    result = await idempotency.prune_expired_idempotency(
+        batch_size=2, pause_s=0, make_session=lambda: timeout_maker()
+    )
+
+    assert result.page_timeouts == 1, "one page should have timed out"
+    assert result.deleted >= 2, "should have deleted rows from non-timeout pages"
+
+
+async def test_consecutive_page_timeouts_stop_sweep(clients, monkeypatch):
+    """Three consecutive page timeouts stop the sweep to prevent infinite loops.
+
+    If every page times out (persistent bloat or other issue), continuing would loop
+    forever advancing cursors. Three consecutive timeouts is the threshold.
+    """
+    for n in range(10):
+        await _seed_answer(clients, f"expired-{n}", ttl_s=-3600)
+
+    class FakeQueryCanceledError(Exception):
+        pass
+
+    call_count = 0
+    original_session_maker = idempotency.session_maker
+
+    async def always_timeout():
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            async with original_session_maker() as db:
+                yield db
+        else:
+            raise FakeQueryCanceledError("statement timeout")
+
+    from contextlib import asynccontextmanager
+    timeout_maker = asynccontextmanager(always_timeout)
+
+    result = await idempotency.prune_expired_idempotency(
+        batch_size=2, pause_s=0, make_session=lambda: timeout_maker()
+    )
+
+    assert result.page_timeouts == 3, "should stop after 3 consecutive timeouts"
+    assert result.complete is False, "incomplete due to consecutive timeouts"
+
+
+async def test_result_includes_page_timeouts_field(clients):
+    """The result dataclass includes page_timeouts for monitoring/alerting."""
+    await _seed_answer(clients, "expired", ttl_s=-3600)
+    result = await idempotency.prune_expired_idempotency(pause_s=0)
+    assert hasattr(result, "page_timeouts"), "result must have page_timeouts field"
+    assert result.page_timeouts == 0, "no timeouts in normal operation"
+    assert result.deleted == 1
+    assert result.complete is True

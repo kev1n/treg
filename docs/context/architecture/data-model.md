@@ -222,13 +222,17 @@ uses this metadata, never the encrypted token's shape.
   commits before its 250 ms pause; pending claims and answers valid at the cutoff are untouched.
   ID pages are selected before expiry filtering, so a page of live responses cannot force an
   unbounded scan searching for expired matches. The DELETE applies the expiry and status guards.
-  Postgres transactions use a 1-second lock timeout and 15-second statement timeout. A failed batch
-  rolls back, earlier batches remain committed, and the next run retries remaining rows. `--dry-run`
-  counts eligible rows without writes. Counts accumulate within the metadata-only ID pages, never
-  from a separate full-table aggregate; `complete` reports whether traversal reached the fixed upper
-  ID. An interrupted or bounded partial sweep exits nonzero and the next run starts from the front.
-  No retention index or schema migration is needed for this single cursor traversal. Ordinary vacuum
-  makes deleted storage reusable; the command does not run table-rewriting or vacuum operations.
+  Postgres transactions use a 1-second lock timeout; the page SELECT uses a 60-second statement
+  timeout and the DELETE uses 15 seconds. A page timeout does not fail the run: the cursor advances
+  by batch_size and the sweep continues. Three consecutive page timeouts stop the run to prevent
+  infinite loops. The `page_timeouts` field tracks skipped pages. A failed DELETE batch rolls back,
+  earlier batches remain committed, and the next run retries remaining rows. `--dry-run` counts
+  eligible rows without writes. Counts accumulate within the metadata-only ID pages, never from a
+  separate full-table aggregate; `complete` reports whether traversal reached the fixed upper ID.
+  An interrupted or bounded partial sweep exits nonzero and the next run starts from the front.
+  No retention index or schema migration is needed for this single cursor traversal. After a large
+  first prune, run `VACUUM (ANALYZE) idempotentcall` once to reclaim dead tuple space; routine hourly
+  cleanup leaves vacuuming to Postgres autovacuum.
 
 - **`ToolRequest`** - a "the catalog doesn't have X" report (`POST /tool-requests`, open + per-IP
   rate-limited): `capability` (the headline, ≤200 chars), `query` (the search that came up empty -
