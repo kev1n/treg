@@ -1,0 +1,351 @@
+provider: contactout
+source:
+  docs: https://api.contactout.com/
+  openapi: null # ContactOut documents its API on a Slate-style site; no fetchable OpenAPI document is published
+  curated: '2026-09-07'
+# SCAFFOLD 2026-09-07 — paths, params and credit-unit costs transcribed from
+# https://api.contactout.com/ (auth section + endpoint pages). treg has a custom Team/API plan after
+# talking to ContactOut sales; per-endpoint USD prices are NOT public and must NOT be invented.
+# Fill USD / fx.yaml when the vendor rate card lands. Live catalog_verify + verified: stamps need a
+# real API token supplied privately (never commit secrets).
+#
+# Auth: header `token: <YOUR_API_TOKEN>` per the official Authentication section. Some example curls
+# also show `authorization: basic`; treg's registry uses the documented `token` header.
+#
+# Billing (docs): separate credit pools — email credits, phone credits, search credits, and
+# "verifier" credits. Many routes charge ONLY on a hit (email/phone found). People Count and the
+# contact-checker routes consume no credits but are paid-users-only.
+#
+# Probe: POST /v1/people/count — free of credits (paid users). Observed 2026-09-07 with a garbage
+# token: HTTP 401 {"message":"Failed to authenticate because of bad credentials or an invalid
+# header.","status_code":401}. Valid-key behavior still needs a live credential (paid-only gate).
+#
+# Not modelled in this core file (follow-up / extended): bulk LinkedIn batch (v1 + async v2),
+# email verify batch, hashed-email identifiers, contact checkers, campaigns API, email→LinkedIn
+# person lookup.
+
+limits: "People Search 60 req/min; Contact Checker 150 req/min; other APIs 1000 req/min (docs)"
+pricing_url: https://contactout.com/pricing  # Self-serve UI tiers; Team/API is custom for treg — ask sales for the rate card before filling USD
+
+proposed_capabilities:
+  people.search.count: "Count the people matching a search before paying for the rows"
+
+endpoints:
+  - id: contactout.people.linkedin.enrich
+    domain: contacts
+    capability: people.enrich
+    platform: people
+    scope: any_account
+    method: GET
+    path: /v1/linkedin/enrich
+    name: "Enrich a LinkedIn profile URL — emails, phone, experience"
+    summary: "Get profile details and contact info for a single LinkedIn profile URL"
+    input:
+      queryParams:
+        profile: {type: string, required: true, note: "fully formed LinkedIn URL beginning with http and containing linkedin.com/in/ or linkedin.com/pub/", example: "https://www.linkedin.com/in/example-person"}
+        profile_only: {type: boolean, required: false, note: "if true, returns profile data without contact information (charges a search credit instead)", example: false}
+      note: "Regular LinkedIn URLs only — not Sales Navigator or Recruiter. Empty match returns status_code 200 with profile: []"
+    test_request:
+      queryParams: {profile: "https://www.linkedin.com/in/example-person", profile_only: true}
+    cost:
+      type: per_success
+      value: 1
+      currency: credit
+      per: 1
+      unit: call
+      source: docs
+      source_url: https://api.contactout.com/
+      checked: '2026-09-07'
+      confidence: documented
+      note: "1 email credit if email found + 1 phone credit if phone found; OR 1 search credit if profile_only=true or no contact info. USD/credit TBD (custom treg plan)."
+
+  - id: contactout.people.email.enrich
+    domain: contacts
+    capability: people.enrich
+    miss:
+      status: 404
+      means: "Not Found — no profile for this email; do not retry the same address"
+    platform: people
+    scope: any_account
+    method: GET
+    path: /v1/email/enrich
+    name: "Enrich a person from an email address"
+    summary: "Get profile details for a single email address (personal emails match more often)"
+    input:
+      queryParams:
+        email: {type: string, required: true, note: "email address to enrich", example: "person@example.com"}
+        include: {type: string, required: false, note: "currently supports work_email to also return work email", example: "work_email"}
+    test_request:
+      queryParams: {email: "person@example.com"}
+    cost:
+      type: per_success
+      value: 1
+      currency: credit
+      per: 1
+      unit: call
+      source: docs
+      source_url: https://api.contactout.com/
+      checked: '2026-09-07'
+      confidence: documented
+      note: "1 email credit if email found + 1 phone credit if phone found. USD/credit TBD (custom treg plan)."
+
+  - id: contactout.people.enrich
+    domain: contacts
+    capability: people.enrich
+    miss:
+      status: 404
+      means: "Not Found — no matching profile for the identifiers; do not retry the same set"
+    platform: people
+    scope: any_account
+    method: POST
+    path: /v1/people/enrich
+    name: "Enrich a person from flexible identifiers"
+    summary: "Enrich a person from name, email, phone, LinkedIn URL, company, education or location"
+    input:
+      bodyType: json
+      body:
+        linkedin_url: {type: string, required: false, note: "LinkedIn profile URL", example: "https://linkedin.com/in/janedoe"}
+        email: {type: string, required: false, example: "jane@example.com"}
+        phone: {type: string, required: false, example: "+14155552671"}
+        full_name: {type: string, required: false, example: "Jane Doe"}
+        first_name: {type: string, required: false, note: "must be used with last_name", example: "Jane"}
+        last_name: {type: string, required: false, example: "Doe"}
+        company: {type: "array[string]", required: false, note: "company names, max 10 — secondary when using name params", example: ["stripe"]}
+        company_domain: {type: "array[string]", required: false, note: "company domains, max 10", example: ["http://stripe.com"]}
+        education: {type: "array[string]", required: false, note: "schools, max 10"}
+        location: {type: string, required: false, example: "San Francisco, CA"}
+        job_title: {type: string, required: false, example: "Product Manager"}
+        include: {type: "array[string]", required: false, note: "contact types to include: work_email, personal_email, phone — default is profile without contacts", example: ["work_email", "personal_email"]}
+      note: "By default returns profile without contact details; set include to reveal emails/phones (extra credits)"
+    test_request:
+      body: {full_name: "Jane Doe", company: ["stripe"], include: []}
+    cost:
+      type: per_success
+      value: 1
+      currency: credit
+      per: 1
+      unit: call
+      source: docs
+      source_url: https://api.contactout.com/
+      checked: '2026-09-07'
+      confidence: documented
+      note: "1 search credit if a profile was found; plus 1 email credit if email found and 1 phone credit if phone found (when include requests them). USD/credit TBD."
+
+  - id: contactout.people.linkedin.contact
+    domain: contacts
+    capability: people.email.find
+    miss:
+      status: 404
+      means: "Not Found — no contact info for this LinkedIn profile"
+    platform: people
+    scope: any_account
+    method: GET
+    path: /v1/people/linkedin
+    name: "Get contact info from a LinkedIn profile URL"
+    summary: "Emails (and optionally phone) for a single LinkedIn profile"
+    input:
+      queryParams:
+        profile: {type: string, required: true, note: "fully formed LinkedIn URL with linkedin.com/in/ or linkedin.com/pub/", example: "https://www.linkedin.com/in/example-person"}
+        include_phone: {type: boolean, required: false, note: "include phone numbers (uses phone credits); default false", example: false}
+        email_type: {type: string, required: false, note: "personal | work | personal,work | none — default returns both personal and work", example: "work"}
+    test_request:
+      queryParams: {profile: "https://www.linkedin.com/in/example-person", include_phone: false, email_type: "none"}
+    cost:
+      type: per_success
+      value: 1
+      currency: credit
+      per: 1
+      unit: call
+      source: docs
+      source_url: https://api.contactout.com/
+      checked: '2026-09-07'
+      confidence: documented
+      note: "1 email credit if email found; +1 phone credit if include_phone=true and phone found. email_type=none consumes no email credits. USD/credit TBD."
+
+  - id: contactout.people.search
+    domain: contacts
+    capability: people.search
+    platform: people
+    scope: any_account
+    method: POST
+    path: /v1/people/search
+    name: "Search people by title, company, location and more"
+    summary: "Find profiles matching search criteria; optionally reveal contact info"
+    input:
+      bodyType: json
+      body:
+        page: {type: integer, required: false, note: "page number", example: 1}
+        page_size: {type: integer, required: false, note: "1-25 profiles per page; default 25 — this is the price dial", example: 1}
+        name: {type: string, required: false, example: "John Smith"}
+        job_title: {type: "array[string]", required: false, example: ["Vice President"]}
+        company: {type: "array[string]", required: false, example: ["ContactOut"]}
+        domain: {type: "array[string]", required: false, example: ["https://contactout.com"]}
+        location: {type: "array[string]", required: false, example: ["San Francisco"]}
+        reveal_info: {type: boolean, required: false, note: "THE EXPENSIVE SWITCH — reveals emails/phones and charges contact credits; default false", example: false}
+        data_types: {type: "array[string]", required: false, note: "filter to profiles that have personal_email | work_email | phone"}
+      note: "Many more filters exist (seniority, skills, education, company_size, years_of_experience, boolean equations on some fields) — see docs. Prefer people.count first to size the query."
+    test_request:
+      body: {page: 1, page_size: 1, company: ["ContactOut"], reveal_info: false}
+    cost:
+      type: per_result
+      value: 1
+      currency: credit
+      per: 1
+      unit: record
+      source: docs
+      source_url: https://api.contactout.com/
+      checked: '2026-09-07'
+      confidence: documented
+      note: "1 search credit per profile returned; +1 email/phone credit per profile with contact when reveal_info=true. USD/credit TBD."
+
+  - id: contactout.people.search.count
+    domain: contacts
+    capability: people.search.count
+    platform: people
+    scope: any_account
+    method: POST
+    path: /v1/people/count
+    name: "Count people matching a search (free of credits)"
+    summary: "Total matching profiles and estimated contact availability — does not consume credits"
+    input:
+      bodyType: json
+      body:
+        job_title: {type: "array[string]", required: false, example: ["Vice President"]}
+        company: {type: "array[string]", required: false, example: ["ContactOut"]}
+        location: {type: "array[string]", required: false, example: ["Sydney, Australia"]}
+      note: "Same filters as people/search except page, data_types, reveal_info. Paid users only. This is the registry's connect probe."
+    test_request:
+      body: {job_title: ["Vice President"], company: ["ContactOut"]}
+    cost:
+      type: free
+      value: 0
+      currency: USD
+      unit: call
+      source: docs
+      source_url: https://api.contactout.com/
+      checked: '2026-09-07'
+      confidence: documented
+      note: "Does not consume credits. Access: paid users only. Bad-key observed 2026-09-07: HTTP 401 with message about bad credentials / invalid header."
+
+  - id: contactout.companies.domain.enrich
+    domain: companies
+    capability: companies.enrich
+    platform: companies
+    scope: any_account
+    method: POST
+    path: /v1/domain/enrich
+    name: "Enrich companies from domain names"
+    summary: "Company firmographics for one or more domains (max 30)"
+    input:
+      bodyType: json
+      body:
+        domains: {type: "array[string]", required: true, note: "domain names without protocol, max 30", example: ["stripe.com"]}
+    test_request:
+      body: {domains: ["stripe.com"]}
+    cost:
+      type: per_result
+      value: 1
+      currency: credit
+      per: 1
+      unit: record
+      source: docs
+      source_url: https://api.contactout.com/
+      checked: '2026-09-07'
+      confidence: documented
+      note: "1 search credit for each company found. USD/credit TBD."
+
+  - id: contactout.people.email.verify
+    domain: contacts
+    capability: people.email.verify
+    platform: people
+    scope: any_account
+    method: GET
+    path: /v1/email/verify
+    name: "Verify an email address is deliverable"
+    summary: "Check deliverability — valid, invalid, accept_all, disposable, or unknown"
+    input:
+      queryParams:
+        email: {type: string, required: true, note: "address to verify", example: "test@example.com"}
+    test_request:
+      queryParams: {email: "test@example.com"}
+    cost:
+      type: per_success
+      value: 1
+      currency: credit
+      per: 1
+      unit: call
+      source: docs
+      source_url: https://api.contactout.com/
+      checked: '2026-09-07'
+      confidence: documented
+      note: "1 verifier credit when result is valid, invalid, or accept_all (docs). disposable/unknown billing unstated in the single-verify Cost section — live-check before treating as free. USD/credit TBD."
+
+  - id: contactout.people.decision_makers
+    domain: contacts
+    capability: people.decision_makers
+    platform: people
+    scope: any_account
+    method: GET
+    path: /v1/people/decision-makers
+    name: "Find decision-makers at a company"
+    summary: "Key decision-maker profiles for a company identified by LinkedIn URL, domain or name"
+    input:
+      queryParams:
+        linkedin_url: {type: string, required: false, note: "company LinkedIn URL containing linkedin.com/company/", example: "https://linkedin.com/company/contactout"}
+        domain: {type: string, required: false, note: "company website domain", example: "contactout.com"}
+        name: {type: string, required: false, note: "company name"}
+        page: {type: integer, required: false, example: 1}
+        reveal_info: {type: boolean, required: false, note: "reveal emails/phones (charges contact credits); default false", example: false}
+      note: "At least one of linkedin_url | domain | name is required"
+    test_request:
+      queryParams: {domain: "contactout.com", reveal_info: false}
+    cost:
+      type: per_result
+      value: 1
+      currency: credit
+      per: 1
+      unit: record
+      source: docs
+      source_url: https://api.contactout.com/
+      checked: '2026-09-07'
+      confidence: documented
+      note: "1 search credit per profile returned; + email/phone credits when reveal_info=true and contacts found. USD/credit TBD."
+
+  - id: contactout.companies.search
+    domain: companies
+    capability: companies.search
+    platform: companies
+    scope: any_account
+    method: POST
+    path: /v1/company/search
+    name: "Search companies by name, domain, size, industry"
+    summary: "Company profiles matching firmographic filters"
+    input:
+      bodyType: json
+      body:
+        page: {type: integer, required: false, example: 1}
+        name: {type: "array[string]", required: false, example: ["ContactOut"]}
+        domain: {type: "array[string]", required: false, example: ["contactout.com"]}
+        size: {type: "array[string]", required: false, note: "employee size buckets e.g. 1_10", example: ["11_50"]}
+        location: {type: "array[string]", required: false, example: ["United States"]}
+        industry: {type: "array[string]", required: false, note: "docs example uses industry; parameter table also lists industries", example: ["Software"]}
+        hq_only: {type: boolean, required: false, example: false}
+        min_revenue: {type: integer, required: false}
+        max_revenue: {type: integer, required: false}
+        year_founded_from: {type: integer, required: false}
+        year_founded_to: {type: integer, required: false}
+        technologies: {type: "array[string]", required: false}
+      note: "linkedin_url filter cannot be combined with other search filters"
+    test_request:
+      body: {page: 1, domain: ["contactout.com"]}
+    cost:
+      type: per_result
+      value: 1
+      currency: credit
+      per: 1
+      unit: record
+      source: docs
+      source_url: https://api.contactout.com/
+      checked: '2026-09-07'
+      confidence: documented
+      note: "1 search credit for each company returned. USD/credit TBD."
