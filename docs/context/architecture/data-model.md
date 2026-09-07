@@ -220,6 +220,8 @@ uses this metadata, never the encrypted token's shape.
   hourly `treg-worker idempotency prune` cron. Caller-scoped lazy cleanup remains for immediate key
   reuse. Each run fixes its UTC cutoff and upper ID, walks the primary key in batches of 200, and
   commits before its 250 ms pause; pending claims and answers valid at the cutoff are untouched.
+  ID pages are selected before expiry filtering, so a page of live responses cannot force an
+  unbounded scan searching for expired matches. The DELETE applies the expiry and status guards.
   Postgres transactions use a 1-second lock timeout and 15-second statement timeout. A failed batch
   rolls back, earlier batches remain committed, and the next run retries remaining rows. `--dry-run`
   reports eligibility without writes; a bounded run with remaining eligible rows exits nonzero.

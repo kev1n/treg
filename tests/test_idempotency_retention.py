@@ -18,7 +18,7 @@ async def test_cleanup_preserves_live_replay_and_pending_claims(clients, platfor
     dry = await idempotency.prune_expired_idempotency(dry_run=True)
     assert dry.eligible == 5 and dry.deleted == 0
     result = await idempotency.prune_expired_idempotency(batch_size=2, pause_s=0)
-    assert (result.deleted, result.batches, result.remaining) == (5, 3, 0)
+    assert (result.deleted, result.batches, result.remaining) == (5, 4, 0)
     async with session_maker() as db:
         assert set((await db.scalars(select(IdempotentCall.key))).all()) == {
             "valid", "pending", "expired-pending"}
@@ -77,3 +77,11 @@ async def test_lock_timeout_rolls_back_batch(clients):
         await holder.rollback()
     result = await idempotency.prune_expired_idempotency(pause_s=0)
     assert result.deleted == 1
+
+
+async def test_live_pages_do_not_stop_the_expiry_sweep(clients):
+    for n in range(4):
+        await _seed_answer(clients, f"live-{n}")
+    await _seed_answer(clients, "expired-tail", ttl_s=-3600)
+    result = await idempotency.prune_expired_idempotency(batch_size=2, pause_s=0)
+    assert (result.deleted, result.batches, result.remaining) == (1, 3, 0)

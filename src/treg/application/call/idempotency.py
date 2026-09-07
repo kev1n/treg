@@ -241,7 +241,8 @@ async def prune_expired_idempotency(*, batch_size: int = 200, pause_s: float = 0
                                    make_session=session_maker) -> IdempotencyPruneResult:
     """Remove only completed, expired answers, with a fixed window and bounded transactions.
 
-    The primary-key cursor traverses the table once without a new index or schema migration.
+    Page IDs first, then filter the DELETE: filtering before LIMIT can walk the entire cold
+    history to find one expired row. The primary-key cursor bounds each page without a migration.
     Concurrent caller cleanup is harmless: the DELETE repeats the eligibility predicate.
     Pending claims and responses valid at the start of the sweep cannot be removed.
     """
@@ -273,7 +274,7 @@ async def prune_expired_idempotency(*, batch_size: int = 200, pause_s: float = 0
         async with make_session() as db:
             await bound(db)
             ids = list((await db.scalars(select(IdempotentCall.id).where(
-                *eligible_where, IdempotentCall.id > cursor,
+                IdempotentCall.id <= upper_id, IdempotentCall.id > cursor,
             ).order_by(IdempotentCall.id).limit(batch_size))).all())
             if not ids:
                 break
