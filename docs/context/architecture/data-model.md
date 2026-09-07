@@ -26,6 +26,7 @@ sources:
   - src/treg/maintenance.py
   - src/treg/web/sitetrack.js
   - src/treg/models.py
+  - src/treg/application/call/idempotency.py
   - src/treg/timeutil.py
   - src/treg/infra/db.py
   - src/treg/domain/referrals.py
@@ -215,6 +216,16 @@ uses this metadata, never the encrypted token's shape.
   the membership is revoked there is no valid caller that can replay it. `delete_membership` removes
   it explicitly and the `membership_id` foreign key uses `ON DELETE CASCADE` as the schema backstop
   (Alembic `0015`), so a cached paid response can never turn token revocation into a 500.
+  `prune_expired_idempotency` additionally sweeps completed, expired responses globally from the
+  hourly `treg-worker idempotency prune` cron. Caller-scoped lazy cleanup remains for immediate key
+  reuse. Each run fixes its UTC cutoff and upper ID, walks the primary key in batches of 200, and
+  commits before its 250 ms pause; pending claims and answers valid at the cutoff are untouched.
+  Postgres transactions use a 1-second lock timeout and 15-second statement timeout. A failed batch
+  rolls back, earlier batches remain committed, and the next run retries remaining rows. `--dry-run`
+  reports eligibility without writes; a bounded run with remaining eligible rows exits nonzero.
+  No retention index or schema migration is needed for this single cursor traversal. Ordinary vacuum
+  makes deleted storage reusable; the command does not run table-rewriting or vacuum operations.
+
 - **`ToolRequest`** - a "the catalog doesn't have X" report (`POST /tool-requests`, open + per-IP
   rate-limited): `capability` (the headline, ≤200 chars), `query` (the search that came up empty -
   auto-filled by agents, the dedup/priority signal), `note`, `contact`, `source` (`web` | `cli` |

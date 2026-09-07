@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
-from sqlalchemy import delete
+from sqlalchemy import delete, func, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -160,11 +162,8 @@ async def _claim_idempotent(key: str, fingerprint: str, rest: str, caller: Calle
     The pending row IS the lock. It goes in before the upstream call, so a concurrent retry loses the
     insert on `(membership_id, key)` and is told to wait rather than duplicating the spend.
     """
-    # Sweep this caller's expired labels first. LAZY and caller-scoped, matching the hold reaper in
-    # domain/money and for the same reasons: a background timer would need a scheduler and a leader
-    # election on a multi-instance deploy, and would still only run on a timer. One indexed DELETE
-    # paid by the caller who benefits from it, and a caller who never calls again leaves rows that
-    # can no longer answer anything, because a replay checks the window before it serves.
+    # Opportunistically release this caller's expired labels. The hourly worker additionally
+    # cleans completed answers for callers who never return; see prune_expired_idempotency.
     #
     # Freeing the label matters as much as reclaiming the space: without this, reusing a label a day
     # later would hit the old row's unique constraint and be refused rather than starting fresh.
@@ -225,3 +224,73 @@ async def _store_idempotent(key: str, caller: Caller, *, status_code: int, body:
     except Exception as exc:  # noqa: BLE001 — loudly, but never into the caller's response
         logging.getLogger("treg.idempotency").error(
             "could not record idempotency key %s: %s", key, exc, exc_info=True)
+
+
+@dataclass(frozen=True)
+class IdempotencyPruneResult:
+    cutoff: datetime
+    upper_id: int
+    eligible: int
+    deleted: int
+    batches: int
+    remaining: int
+
+
+async def prune_expired_idempotency(*, batch_size: int = 200, pause_s: float = 0.25,
+                                   max_batches: int = 10000, dry_run: bool = False,
+                                   make_session=session_maker) -> IdempotencyPruneResult:
+    """Remove only completed, expired answers, with a fixed window and bounded transactions.
+
+    The primary-key cursor traverses the table once without a new index or schema migration.
+    Concurrent caller cleanup is harmless: the DELETE repeats the eligibility predicate.
+    Pending claims and responses valid at the start of the sweep cannot be removed.
+    """
+    if not 1 <= batch_size <= 1000 or not 1 <= max_batches <= 10000:
+        raise ValueError("batch_size must be 1..1000 and max_batches must be 1..10000")
+    if not 0 <= pause_s <= 60:
+        raise ValueError("pause_s must be 0..60")
+
+    async def bound(db):
+        if db.bind.dialect.name == "postgresql":
+            await db.execute(text("SET LOCAL lock_timeout = '1s'"))
+            await db.execute(text("SET LOCAL statement_timeout = '15s'"))
+
+    async with make_session() as db:
+        await bound(db)
+        cutoff = (await db.scalar(select(func.current_timestamp()))).replace(tzinfo=None)
+        upper_id = (await db.scalar(select(func.max(IdempotentCall.id)))) or 0
+        eligible_where = (
+            IdempotentCall.status == "done",
+            IdempotentCall.expires_at < cutoff,
+            IdempotentCall.id <= upper_id,
+        )
+        eligible = await db.scalar(select(func.count()).select_from(IdempotentCall).where(*eligible_where))
+    if dry_run:
+        return IdempotencyPruneResult(cutoff, upper_id, eligible, 0, 0, eligible)
+
+    cursor = deleted = batches = 0
+    while batches < max_batches:
+        async with make_session() as db:
+            await bound(db)
+            ids = list((await db.scalars(select(IdempotentCall.id).where(
+                *eligible_where, IdempotentCall.id > cursor,
+            ).order_by(IdempotentCall.id).limit(batch_size))).all())
+            if not ids:
+                break
+            removed = (await db.execute(delete(IdempotentCall).where(
+                *eligible_where, IdempotentCall.id.in_(ids),
+            ).returning(IdempotentCall.id))).all()
+            await db.commit()
+            cursor = ids[-1]
+            deleted += len(removed)
+            batches += 1
+        # No connection is held during the throttle pause.
+        if batches % 50 == 0:
+            logging.getLogger("treg.idempotency").info(
+                "idempotency prune: batches=%d deleted=%d cursor=%d", batches, deleted, cursor)
+        await asyncio.sleep(pause_s)
+
+    async with make_session() as db:
+        await bound(db)
+        remaining = await db.scalar(select(func.count()).select_from(IdempotentCall).where(*eligible_where))
+    return IdempotencyPruneResult(cutoff, upper_id, eligible, deleted, batches, remaining)

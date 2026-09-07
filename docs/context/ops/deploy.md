@@ -51,6 +51,19 @@ serve path does so after single-user bootstrap, and `python -m treg upgrade` doe
 tasks. The next event loop therefore creates fresh pooled connections instead of receiving connections
 bound to a closed maintenance loop. Calling `maintenance.upgrade()` directly does not dispose the engine.
 
+## Replay-cache retention
+
+`treg-idempotency-prune` runs `treg-worker idempotency prune` at minute 43 each hour (UTC) on a
+Render starter cron, using only the database URL and the secret key needed by `verify_db`.
+It runs independently of web workers and holds at most one database connection at a time.
+The command defaults to 200 rows per committed batch, a 250 ms pause outside the session, and
+10,000 batches maximum. `--dry-run` prints the fixed cutoff, upper ID and eligible count without
+writing; the final JSON includes deleted rows, batches and remaining eligible rows. Incomplete
+bounded runs exit nonzero so cron failures are visible. Render serializes runs of this cron.
+Retention uses the existing table and primary key; it requires no migration or web-service restart.
+Use ordinary, throttled `VACUUM (ANALYZE, TRUNCATE FALSE) idempotentcall` after a large manual
+backlog cleanup if needed; routine hourly cleanup leaves vacuuming to Postgres autovacuum.
+
 ## Schema upgrade safety
 - **Alembic is authoritative:** migration scripts ship inside `src/treg/alembic/` in the wheel.
   `maintenance._alembic_config()` resolves that installed package resource, supplies the escaped
