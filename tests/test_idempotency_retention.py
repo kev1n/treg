@@ -1,6 +1,6 @@
 """Global retention without breaking live paid-response replay."""
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, func
 from sqlmodel import select
 
 from treg.application.call import idempotency
@@ -85,3 +85,57 @@ async def test_live_pages_do_not_stop_the_expiry_sweep(clients):
     await _seed_answer(clients, "expired-tail", ttl_s=-3600)
     result = await idempotency.prune_expired_idempotency(batch_size=2, pause_s=0)
     assert (result.deleted, result.batches, result.complete) == (1, 3, True)
+
+
+async def test_counts_accumulate_from_page_metadata_not_aggregate_queries(clients):
+    """Regression test for production timeout: counts must not require unbounded scans.
+
+    The prune worker hit statement_timeout twice in production:
+    1. First on the initial SELECT with expiry filter + LIMIT (fixed by ID-first pages).
+    2. Then on the final COUNT(*) WHERE expired (fixed by accumulating within pages).
+
+    This test verifies that eligible/deleted counts are derived from the bounded
+    ID-page iteration, not from separate aggregate queries. The function must
+    complete without issuing any COUNT(*) WHERE status='done' AND expires_at<cutoff.
+
+    Contract: `eligible` = sum of expired rows found per metadata page;
+    `complete` = whether the fixed upper-ID traversal finished.
+    """
+    for n in range(6):
+        await _seed_answer(clients, f"expired-{n}", ttl_s=-3600)
+    for n in range(4):
+        await _seed_answer(clients, f"live-{n}")
+
+    result = await idempotency.prune_expired_idempotency(batch_size=3, pause_s=0)
+
+    assert result.eligible == 6, "eligible must be accumulated from page metadata"
+    assert result.deleted == 6, "all eligible rows should be deleted"
+    assert result.complete is True, "traversal should complete"
+
+    async with session_maker() as db:
+        remaining = (await db.scalars(select(IdempotentCall.key))).all()
+    assert set(remaining) == {f"live-{n}" for n in range(4)}
+
+
+async def test_partial_sweep_exits_nonzero_without_final_count(clients):
+    """A bounded partial sweep must not attempt a final aggregate count.
+
+    When max_batches is reached before traversal completes, the function returns
+    complete=False. The worker exits 1 so the next run continues. This must happen
+    without any full-table COUNT that could timeout and turn a successful partial
+    sweep into a failed run.
+    """
+    for n in range(10):
+        await _seed_answer(clients, f"expired-{n}", ttl_s=-3600)
+
+    result = await idempotency.prune_expired_idempotency(
+        batch_size=2, max_batches=2, pause_s=0
+    )
+
+    assert result.deleted == 4, "should delete 2 batches × 2 rows"
+    assert result.complete is False, "traversal incomplete"
+    assert result.batches == 2, "stopped at max_batches"
+
+    async with session_maker() as db:
+        count = await db.scalar(select(func.count()).select_from(IdempotentCall))
+    assert count == 6, "remaining rows from incomplete sweep"
