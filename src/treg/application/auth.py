@@ -209,6 +209,8 @@ async def start_email_login(email: str, client_ip: str) -> dict:
         raise EmailAuthError("demo_address")
     if _is_machine_email(email):
         raise EmailAuthError("machine_identity")
+    if signup.blocked_email(email, "otp_start"):  # refuse early: no code, no mail, no rate window
+        raise EmailAuthError("blocked_domain")
 
     async with database.session_maker() as db:
         await ratestore.sweep(db, OTP_START_NS)
@@ -253,9 +255,11 @@ async def verify_email_login(email: str, code: str) -> VerifiedEmail:
             raise EmailAuthError("invalid_code")
         await ratestore.kv_pop(db, OTP_NS, email)
         try:
-            user = await signup.find_or_create_user(db, email)
+            user = await signup.find_or_create_user(db, email, door="otp_verify")
         except signup.MachineIdentityError as exc:
             raise EmailAuthError("machine_identity") from exc
+        except signup.BlockedEmailError as exc:  # a code minted before the domain was listed
+            raise EmailAuthError("blocked_domain") from exc
         if user.suspended:
             raise EmailAuthError("suspended")
         await db.commit()
@@ -427,12 +431,14 @@ def start_google_login(cli: str, callback_base: Callable[[], str]) -> SocialLogi
     return SocialLoginStart(state=state, url=url)
 
 
-async def _provision_social_user(email: str, state: str) -> SocialLoginProof:
+async def _provision_social_user(email: str, state: str, door: str) -> SocialLoginProof:
     async with database.session_maker() as db:
         try:
-            user = await signup.find_or_create_user(db, email)  # first login = registration (user only; no auto org)
+            user = await signup.find_or_create_user(db, email, door=door)  # first login = registration (user only; no auto org)
         except signup.MachineIdentityError as exc:
             raise SocialLoginError("machine_identity") from exc
+        except signup.BlockedEmailError as exc:  # a Google/GitHub account on a listed domain
+            raise SocialLoginError("blocked_domain") from exc
         if user.suspended:  # a banned account may prove its email but must not receive a live session
             raise SocialLoginError("suspended")
         await db.commit()
@@ -472,7 +478,7 @@ async def complete_github_login(
     except Exception as exc:  # noqa: BLE001
         print(f"[auth] github callback error: {exc}")  # keep internals server-side, not in the response
         raise SocialLoginError("callback_failed") from exc
-    return await _provision_social_user(email, state)
+    return await _provision_social_user(email, state, "github")
 
 
 async def complete_google_login(
@@ -509,7 +515,7 @@ async def complete_google_login(
     except Exception as exc:  # noqa: BLE001
         print(f"[auth] google callback error: {exc}")  # keep internals server-side, not in the response
         raise SocialLoginError("callback_failed") from exc
-    return await _provision_social_user(email, state)
+    return await _provision_social_user(email, state, "google")
 
 
 async def current_identity(x_treg_token: str, session_cookie: str) -> CurrentIdentity:
@@ -602,9 +608,11 @@ async def confirm_invite_signin(email_token: str) -> InviteSigninProof:
         if invite is None:  # consumed / expired / revoked / suspended org → the SPA's expired banner
             raise InviteSigninError("expired")
         try:
-            user = await signup.find_or_create_user(db, invite.email)  # first click = registration (user only, no auto org)
+            user = await signup.find_or_create_user(db, invite.email, door="invite_link")  # first click = registration (user only, no auto org)
         except signup.MachineIdentityError as exc:
             raise InviteSigninError("machine_identity") from exc
+        except signup.BlockedEmailError as exc:  # an invite to a listed domain must not become a session
+            raise InviteSigninError("blocked_domain") from exc
         if user is None or user.suspended:  # a banned account may hold the link but must not get a session
             raise InviteSigninError("suspended")
         invite.email_token_hash = None  # consume: one sign-in per emailed link

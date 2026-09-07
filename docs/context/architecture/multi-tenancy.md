@@ -114,6 +114,41 @@ pair, so every list/create/mutation and the proxy are scoped to the caller's org
   Every identity door is blocked at the shared choke point `_find_or_create_user`, plus `register_user`
   (which predates it and creates a `User` directly) and `auth_email_start` (refuse early, mint no code).
   `list_members` carries `is_agent` so one roster can show people and machines apart.
+- **Email-domain blocklist.** The same choke points, for throwaway mail and domains used for bulk
+  registration. A new team is created with a promotional balance, which is what makes registering in
+  bulk on throwaway addresses worth someone's while. **Two tiers, one classifier**
+  (`_is_blocked_email` in `domain/identity/access.py`, pure: it only answers). The CODE tier is
+  `BLOCKED_EMAIL_DOMAINS` (domains confirmed abusive in our own data, and `my.id` so every free
+  `.my.id` subdomain falls to the walk) plus `BLOCKED_EMAIL_KEYWORDS`, substring rules on the domain
+  (`tempmail`, `mailinator`, `guerrilla`, `10minute`, ...) that catch domains no static list has
+  seen. The OPS tier is `TREG_BLOCKED_EMAIL_DOMAINS`, comma-separated, **added to** the code tier
+  and parsed once per distinct value in `config.py` (trim, drop a leading `@`/`.`, lowercase, and
+  drop any dotless entry so a typed `com` cannot refuse the world): the next domain is a **dashboard
+  edit, no redeploy**. The rules, each of which exists because the obvious implementation is wrong:
+  match the **domain only**, never the whole address (matching the address false-flags real users
+  whose username happens to contain a keyword); **walk parent domains**, whole labels off the front
+  and never the bare last label, because registering `<random>.<blocked-root>` is otherwise a
+  one-line bypass; **sign-in as well as sign-up** (an account that predates the listing gets no
+  new session; existing accounts are suspended out of band). The DECISION lives in the application
+  layer, `signup.blocked_email(email, door)`: it refuses, writes one structured line per block
+  (`event=signup_blocked_domain door=<door> domain=<domain>` — the refusal reveals nothing, so the
+  log is the only detection a burst has), and **fails open**, logging `event=blocklist_error`
+  and letting the sign-in through if the classifier ever raises, because a misconfiguration must
+  never break a real sign-in. The doors: `start_email_login` (before the rate window, so no code and
+  no mail), `find_or_create_user` (so OTP verify, the GitHub and Google callbacks and the emailed
+  invite link `POST /auth/invite-signin` refuse before the row lookup, raising
+  `signup.BlockedEmailError` which each door translates to a `blocked_domain` kind), `register_user`
+  (`POST /users` mints user + team + promo in one call), `create_org` (`POST /orgs`, the other promo
+  door, reachable with a token minted before the listing) and the code-based `POST /invites/accept`
+  (which constructs a `User` directly, so it guards itself). Every refusal is the `machine_identity`
+  sibling's exact 403 `this address cannot be used to sign in` (a brand page on the browser doors,
+  like `suspended`): the caller learns neither that a list exists nor what is on it. Deliberately a
+  blocklist and nothing more: no allowlist, no table, no admin UI. Not covered: a session or identity
+  token already live when the domain was listed keeps working until suspension or expiry (the
+  out-of-band suspension); the promo grant and referral bonus are not separately gated, since with
+  the doors closed no promo-funded team on a blocked domain can come into existence; and vendoring a
+  full public disposable-domain list is a follow-up (megabytes of package data in the base wheel,
+  which also ships the light CLI, and not yet checked against real users).
   **A rotate replaces the TOKEN, never the limits.** Because rotate is the same endpoint as create, an
   absent optional field used to fall back to its permissive default — and the dashboard's Rotate button
   sends only `{name, role, daily_call_cap}`, so a scoped agent silently became unrestricted

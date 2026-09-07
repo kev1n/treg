@@ -31,6 +31,18 @@ def platform_setting_name(provider: str) -> str:
     return "platform_key_" + (provider or "").lower().replace("-", "_")
 
 
+@lru_cache
+def _blocked_email_domains(raw: str) -> frozenset[str]:
+    """Parse `TREG_BLOCKED_EMAIL_DOMAINS` once per distinct value, not per request: split on commas,
+    trim, drop a leading `@` or `.` (operators paste both spellings), lowercase, drop empties. A
+    dotless entry (`com`) is dropped too: the classifier walks parent domains, so a bare public
+    suffix would refuse every address on earth from one typo in a dashboard field."""
+    return frozenset(
+        d for d in (part.strip().lstrip("@.").rstrip(".").lower() for part in raw.split(","))
+        if "." in d
+    )
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_prefix="TREG_", extra="ignore")
 
@@ -424,6 +436,22 @@ class Settings(BaseSettings):
     # response, which is an unauthenticated account-takeover vector in prod — so it defaults OFF and
     # must be explicitly enabled (TREG_EMAIL_DEV_MODE=true) for local testing without a mail sender.
     email_dev_mode: bool = False
+
+    # The OPS tier of the email-domain blocklist (TREG_BLOCKED_EMAIL_DOMAINS), comma-separated:
+    # "newfarm.io,other-farm.net". ADDED to the code tier in `domain/identity/access.py` (treg's
+    # confirmed farm roots and the throwaway-mail keyword rules), never replacing it. A listed domain
+    # blocks itself AND every subdomain, case-insensitively, at every sign-up and sign-in door and at
+    # the two doors that mint a promo-funded team (POST /users, POST /orgs). It exists because a
+    # signup-grant farm moves to a new root in minutes and the answer has to be a dashboard edit, not
+    # a deploy. Empty (the default) adds nothing. Existing accounts on a listed domain are suspended
+    # out of band, so listing a domain strands nobody legitimate. A blocklist, deliberately: no
+    # allowlist, no table, no admin UI.
+    blocked_email_domains: str = ""
+
+    @property
+    def blocked_email_domain_set(self) -> frozenset[str]:
+        """The normalised `TREG_BLOCKED_EMAIL_DOMAINS` entries; empty = the code tier alone."""
+        return _blocked_email_domains(self.blocked_email_domains)
 
     # Frictionless local mode: `curl … | sh` brings up a server you are already signed into, with no
     # account, email or password. Only takes effect when `single_user_ok` allows it (see below).

@@ -241,3 +241,58 @@ def _is_agent_email(email: str) -> bool:
 def _is_machine_email(email: str) -> bool:
     """An identity minted by an admin for a machine — never a person who can sign in."""
     return _is_agent_email(email) or _norm_email(email).endswith(f"@{PUBLIC_DEMO_DOMAIN}")
+
+
+# ---- the email-domain blocklist: throwaway mail and abusive signup domains ----------------------
+# A new team is created with a promotional balance (`application.signup._grant_signup_promo`), which
+# makes bulk registration on throwaway addresses worth someone's while. Two tiers, one classifier.
+# Tier 1 is CODE: domains confirmed abusive in our own data, plus substring rules that catch
+# throwaway-mail providers no static list has seen yet. Tier 2 is OPS:
+# `TREG_BLOCKED_EMAIL_DOMAINS`, unioned in, so the next domain is a dashboard edit made the minute it
+# appears, not a deploy. Three rules, each of which exists because the obvious implementation is
+# wrong:
+#   - match the DOMAIN only, never the whole address. Matching the address false-flags real users
+#     whose USERNAME happens to contain a keyword (`tempmail@gmail.com` is a real person).
+#   - walk parent domains, whole labels off the front only and never the bare last label, because
+#     registering `<random>.<blocked-root>` is otherwise a one-line bypass. The walk is safe because
+#     no entry is a bare public suffix, which `config._blocked_email_domains` enforces for the ops
+#     tier by dropping dotless entries.
+#   - a PURE classifier: refusing, logging and skipping a perk are the caller's decisions
+#     (`application.signup.blocked_email`).
+BLOCKED_EMAIL_DOMAINS: frozenset[str] = frozenset({
+    # Confirmed abusive in our own data: bulk registration only, no legitimate account on any of them.
+    "uberip.com",
+    "westcast-systems.com",
+    "mailfox.win",
+    "yopmail.com",
+    # Free `.my.id` subdomains are handed out publicly. Listed as the parent so the walk catches
+    # `<anything>.my.id`.
+    "my.id",
+})
+# Substring rules on the domain: throwaway-mail providers name themselves.
+BLOCKED_EMAIL_KEYWORDS: tuple[str, ...] = (
+    "tempmail", "temp-mail", "mailinator", "guerrilla", "throwaway", "10minute", "trashmail",
+    "yopmail", "sharklasers", "dispostable", "getnada", "maildrop", "moakt", "mohmal",
+    "emailondeck", "fakemail",
+)
+
+
+def _email_domain(email: str) -> str:
+    """The lowercased domain part of an address, "" when there is none. The ONLY part of an address
+    the blocklist ever looks at."""
+    return _norm_email(email).rpartition("@")[2]
+
+
+def _is_blocked_email(email: str) -> bool:
+    """Pure classifier: is this address on a blocked domain, on a subdomain of one, or on a domain
+    that names itself a throwaway? An empty ops list leaves the code tier alone in force."""
+    domain = _email_domain(email)
+    if not domain:
+        return False
+    ops = get_settings().blocked_email_domain_set
+    labels = domain.split(".")
+    for i in range(len(labels) - 1):  # every parent domain, never the bare last label
+        candidate = ".".join(labels[i:])
+        if candidate in BLOCKED_EMAIL_DOMAINS or candidate in ops:
+            return True
+    return any(keyword in domain for keyword in BLOCKED_EMAIL_KEYWORDS)

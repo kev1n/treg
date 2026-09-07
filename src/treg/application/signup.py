@@ -12,7 +12,7 @@ from .. import adsconv, health, sandbox as demo_sandbox
 from ..domain import money as ledger
 from ..domain import referrals
 from ..domain.governance.teams import _make_org_membership, _slugify
-from ..domain.identity.access import _is_machine_email, _norm_email
+from ..domain.identity.access import _email_domain, _is_blocked_email, _is_machine_email, _norm_email
 from ..infra.db import session_maker
 from ..models import Org, User
 from ..timeutil import utcnow_naive as _utcnow_naive
@@ -30,7 +30,28 @@ class MachineIdentityError(Exception):
     """A machine identity reached a human identity-provisioning command."""
 
 
-async def find_or_create_user(db: AsyncSession, email: str) -> User:
+class BlockedEmailError(Exception):
+    """An address on a blocked email domain reached an identity door."""
+
+
+def blocked_email(email: str, door: str) -> bool:
+    """The blocklist DECISION for the identity doors, over the pure classifier `_is_blocked_email`:
+    True means refuse. One structured line per block, so a burst of refusals is countable from the
+    logs — the refusal itself tells the caller nothing, so the log is the only detection. Fails OPEN:
+    a classifier error is logged and the door stays open, because a misconfiguration must never break
+    a real sign-in. `door` names the endpoint for the log only; it never reaches the caller."""
+    log = logging.getLogger("treg.auth")
+    try:
+        if not _is_blocked_email(email):
+            return False
+    except Exception as exc:  # noqa: BLE001 - fail open, by design
+        log.error("event=blocklist_error door=%s error=%s", door, exc)
+        return False
+    log.warning("event=signup_blocked_domain door=%s domain=%s", door, _email_domain(email))
+    return True
+
+
+async def find_or_create_user(db: AsyncSession, email: str, *, door: str = "login") -> User:
     """Find a user by email, else register them — the user ONLY, **no auto personal org**. The shared
     core of every identity door (GitHub / Google / email OTP). A brand-new user therefore lands with
     zero teams and is asked to NAME + CREATE their first team (the dashboard's mandatory welcome, or
@@ -44,6 +65,10 @@ async def find_or_create_user(db: AsyncSession, email: str) -> User:
     # (The domains are unroutable, so a code could never be delivered anyway; this makes it explicit.)
     if _is_machine_email(email):
         raise MachineIdentityError
+    # Same choke point for the domain blocklist, and BEFORE the lookup on purpose: a blocked domain
+    # gets no session whether or not it already has a row (sign-in, not just sign-up).
+    if blocked_email(email, door):
+        raise BlockedEmailError
     user = (await db.execute(select(User).where(User.email == email))).scalar_one_or_none()
     if user is None:
         user = User(email=email)
@@ -176,6 +201,8 @@ async def register_user(
         # otherwise a caller could squat an agent address before an admin mints that agent.
         if _is_machine_email(email):
             raise SignupError("machine_identity")
+        if blocked_email(email, "register"):  # mints a promo-funded team in one call; refuse first
+            raise SignupError("blocked_domain")
         if webhook_url and not health.safe_webhook_url(webhook_url):  # SSRF guard on the alert URL
             raise SignupError("unsafe_webhook")
         if (await db.execute(select(User).where(User.email == email))).scalar_one_or_none():
@@ -222,6 +249,10 @@ async def create_org(
     async with session_maker() as db:
         if demo_sandbox.is_sandbox_user(user):  # anonymous sandbox visitors cannot mint real teams
             raise SignupError("sandbox_user")
+        # An identity registered BEFORE its domain was listed still holds a live token; every team it
+        # creates is another promo grant, so the blocklist covers this door too, not only sign-in.
+        if blocked_email(user.email, "create_org"):
+            raise SignupError("blocked_domain")
         click_field, gclid, landing = _ad_attribution_from(ad_cookie)
         # A browser sign-in reaches this door instead of /users, so both doors must read attribution.
         for _ in range(3):  # a concurrent create can claim the slug before commit; retry a fresh lookup

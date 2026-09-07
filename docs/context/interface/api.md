@@ -363,7 +363,12 @@ validated before resolving the shared HTTP client. `/auth/logout` remains an HTT
 
 - **Identity doors:** GitHub, Google and email OTP share first-proof user provisioning. They create
   a user without an automatic org; new users name their first team through onboarding or the CLI
-  login picker. Suspended users are refused at every door.
+  login picker. Suspended users are refused at every door, and so is any address on a blocked email
+  domain (throwaway-mail rules and confirmed farm roots in code, plus `TREG_BLOCKED_EMAIL_DOMAINS`;
+  subdomains included): the OTP start and verify, both social callbacks, the emailed invite link,
+  plus `POST /users`, `POST /orgs` and `POST /invites/accept`, all with the same 403 `this address
+  cannot be used to sign in` the machine-identity guard uses. See
+  [multi-tenancy](../architecture/multi-tenancy.md).
 
   - GitHub/Google: `GET /auth/{provider}[/callback]`, optional `?cli=<id>`; callbacks validate
     state before resolving the shared HTTP client, require a proven email, and set the session

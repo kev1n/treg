@@ -57,6 +57,9 @@ class EmailVerifyIn(BaseModel):
 _EMAIL_HTTP_ERRORS = {
     "demo_address": (400, "that's a demo address — pick a real email"),
     "machine_identity": (403, "this address cannot be used to sign in"),
+    # Same words as machine_identity on purpose: the caller learns neither that a list exists nor
+    # what is on it.
+    "blocked_domain": (403, "this address cannot be used to sign in"),
     "rate_limited": (429, "too many code requests — please wait a few minutes"),
     "invalid_code": (401, "invalid code"),
     "suspended": (403, "account suspended"),
@@ -108,7 +111,7 @@ async def _find_or_create_user(db: AsyncSession, email: str) -> User:
     Caller commits."""
     try:
         return await signup.find_or_create_user(db, email)
-    except signup.MachineIdentityError as exc:
+    except (signup.MachineIdentityError, signup.BlockedEmailError) as exc:
         raise HTTPException(status_code=403, detail="this address cannot be used to sign in") from exc
 
 
@@ -191,6 +194,8 @@ _SOCIAL_PAGE_ERRORS = {
     "google_unverified_email": ("Login failed", "Your Google email isn't verified.", False, 400),
     "callback_failed": ("Login failed", "Something went wrong. Please try again.", False, 502),
     "suspended": ("Account suspended", "This account has been suspended.", False, 403),
+    # A page, like `suspended`: a human is in the browser. Names no list and no domain.
+    "blocked_domain": ("Sign-in refused", "This address cannot be used to sign in.", False, 403),
 }
 
 
@@ -674,6 +679,8 @@ async def auth_invite_signin_confirm(request: Request):
             raise HTTPException(status_code=403, detail="this address cannot be used to sign in") from exc
         if exc.kind == "suspended":
             return _auth_page("Account suspended", "This account has been suspended.", ok=False, status=403)
+        if exc.kind == "blocked_domain":
+            return _auth_page("Sign-in refused", "This address cannot be used to sign in.", ok=False, status=403)
         raise
     resp = RedirectResponse(proof.destination, status_code=303)
     resp.set_cookie(sess.COOKIE, proof.session_cookie, httponly=True,
