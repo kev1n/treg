@@ -1,0 +1,78 @@
+provider: millionverifier
+source:
+  docs: https://developer.millionverifier.com/
+  openapi: https://developer.millionverifier.com/  # ReDoc OpenAPI 3.1.0 surface; Single API base https://api.millionverifier.com
+  curated: '2026-09-07'
+# Email verification specialist. Auth for the Single API is query `api=` (documented). Live probe
+# 2026-09-07: GET /api/v3/credits?api=<garbage> → HTTP 200 {"result":"error","error":"apikey_not_found"};
+# a valid key returns {"credits":…,"bulk_credits":…,"renewing_credits":…,"plan":…} with no error field.
+# Docs also expose demo keys such as API_KEY_FOR_ERROR_INVALID_APIKEY that flip the same error field.
+#
+# Billing (public packs, credits never expire):
+#   10,000 credits $39 → $0.0039/email (upper bound used below)
+#   50,000 credits $89 → $0.00178/email
+#   100,000 credits $149 → $0.00149/email
+# Single API: charged for ok / invalid / disposable; catch-all and unknown are NOT charged by default
+# (risky goodwill; misuse accounts may lose the refund — see MillionVerifier help).
+#
+# Bulk file API lives on https://bulkapi.millionverifier.com and authenticates with query `key=`
+# (not `api=`). Deferred from this core file so the registry's single query-param transport stays
+# honest — list bulk once a second host/auth binding is supported.
+#
+# Rate limit (Single API): 160 requests/second per account (vendor help).
+
+limits: "Single API ~160 requests/second per account (vendor-documented, account-scoped)"
+pricing_url: https://www.millionverifier.com/
+endpoints:
+  - id: millionverifier.people.email.verify
+    domain: contacts
+    capability: people.email.verify
+    platform: people
+    scope: any_account
+    method: GET
+    path: /api/v3/
+    name: "Verify an email address is deliverable"
+    summary: "Real-time email verification — quality, result code, catch-all/disposable/role flags and remaining credits"
+    input:
+      queryParams:
+        email: {type: string, required: true, note: "the address to verify (URL-encode special characters)", example: "test@example.com"}
+        timeout: {type: integer, required: false, note: "seconds to wait for the recipient server, 2-60, default 20", example: 10}
+      note: "returns result (ok | catch_all | unknown | error | disposable | invalid), resultcode 1-6, quality (good | risky | bad), free/role flags, didyoumean, credits remaining, and error. Auth rides as query api= (injected by treg). Demo keys such as API_KEY_FOR_OK / API_KEY_FOR_CATCH_ALL return fixed shapes for development"
+    test_request:
+      queryParams: {email: "test@example.com", timeout: 10}
+    cost:
+      type: per_success
+      value: 0.0039
+      currency: USD
+      per: 1
+      unit: call
+      source: docs
+      source_url: https://www.millionverifier.com/
+      checked: '2026-09-07'
+      confidence: documented
+      note: "1 credit per charged verification at the public 10k pack rate ($39/10,000 = $0.0039). Charged for ok, invalid and disposable; catch-all and unknown are free on the Single API by default (vendor goodwill). Larger packs are cheaper per credit ($0.00178 at 50k, $0.00149 at 100k). Live meter confirmation still needs TREG_CATALOG_CRED."
+    docs_url: https://developer.millionverifier.com/
+
+  - id: millionverifier.account.usage
+    kind: account
+    capability: account.usage
+    platform: account
+    scope: own_account
+    method: GET
+    path: /api/v3/credits
+    name: "Check credit balance"
+    summary: "Available single and bulk credits on the account behind the key (free)"
+    input:
+      note: "no parameters — the key rides as query api=. Returns credits, bulk_credits, renewing_credits and plan. This is the registry's connect-time probe"
+    test_request: {queryParams: {}}
+    cost:
+      type: free
+      value: 0
+      currency: USD
+      unit: call
+      source: docs
+      source_url: https://developer.millionverifier.com/
+      checked: '2026-09-07'
+      confidence: documented
+      note: free — the credits probe consumes no verification credits; used as the connect-time health check
+    docs_url: https://developer.millionverifier.com/
