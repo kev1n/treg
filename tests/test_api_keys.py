@@ -21,14 +21,32 @@ def _h(token: str) -> dict[str, str]:
     return {"X-Treg-Token": token}
 
 
-async def test_new_human_team_has_only_default_key_with_visible_prefix():
+@pytest.fixture
+def sent_otps(monkeypatch):
+    """Capture sign-in codes through the email boundary, as a real inbox would."""
+    from treg import email as email_mod
+
+    sent = {}
+
+    async def _capture(email: str, code: str, ttl_minutes: int = 10) -> bool:
+        sent[email] = code
+        return True
+
+    monkeypatch.setattr(email_mod, "send_otp", _capture)
+    return sent
+
+
+async def _start_code(client: AsyncClient, email: str, sent_otps: dict[str, str]) -> str:
+    started = await client.post("/auth/email/start", json={"email": email})
+    return started.json().get("dev_code") or sent_otps[email]
+
+
+async def test_new_human_team_has_only_default_key_with_visible_prefix(sent_otps):
     await reset_db()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://registry") as client:
-        started = await client.post(
-            "/auth/email/start", json={"email": "fresh-owner@example.dev"},
-        )
+        code = await _start_code(client, "fresh-owner@example.dev", sent_otps)
         identity = (await client.post("/auth/email/verify", json={
-            "email": "fresh-owner@example.dev", "code": started.json()["dev_code"],
+            "email": "fresh-owner@example.dev", "code": code,
         })).json()["token"]
         created = await client.post(
             "/orgs", headers=_h(identity), json={"name": "Fresh team"},
@@ -379,17 +397,15 @@ async def test_secret_bearing_default_legacy_agent_and_public_responses_are_no_s
     assert (await clients.delete(f"/orgs/{org_id}/public-token")).status_code == 200
 
 
-async def test_identity_token_responses_are_no_store(clients):
+async def test_identity_token_responses_are_no_store(clients, sent_otps):
     revoked = await clients.post("/auth/revoke-tokens")
     assert revoked.json()["token"] and revoked.headers["cache-control"] == "no-store"
     pairing = (await clients.post("/auth/cli/start")).json()
     pending = await clients.get("/auth/cli/poll", params={"login_id": pairing["login_id"]})
     assert pending.headers["cache-control"] == "no-store"
-    started = await clients.post(
-        "/auth/email/start", json={"email": "no-store-login@example.dev"},
-    )
+    code = await _start_code(clients, "no-store-login@example.dev", sent_otps)
     verified = await clients.post("/auth/email/verify", json={
-        "email": "no-store-login@example.dev", "code": started.json()["dev_code"],
+        "email": "no-store-login@example.dev", "code": code,
     })
     assert verified.json()["token"] and verified.headers["cache-control"] == "no-store"
 
@@ -525,10 +541,10 @@ async def test_more_keys_do_not_bypass_membership_daily_cap(clients):
     assert (await clients.get("/call/cap-test/ok", headers=_h(extra))).status_code == 429
 
 
-async def test_default_signed_key_can_be_disabled_for_only_one_team():
+async def test_default_signed_key_can_be_disabled_for_only_one_team(sent_otps):
     await reset_db()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://registry") as client:
-        code = (await client.post("/auth/email/start", json={"email": "owner@example.dev"})).json()["dev_code"]
+        code = await _start_code(client, "owner@example.dev", sent_otps)
         identity = (await client.post(
             "/auth/email/verify", json={"email": "owner@example.dev", "code": code},
         )).json()["token"]
@@ -556,12 +572,10 @@ async def test_default_signed_key_can_be_disabled_for_only_one_team():
         )).status_code == 401
 
 
-async def test_default_key_rotation_is_team_specific_and_not_revocable():
+async def test_default_key_rotation_is_team_specific_and_not_revocable(sent_otps):
     await reset_db()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://registry") as client:
-        code = (await client.post(
-            "/auth/email/start", json={"email": "rotate-owner@example.dev"},
-        )).json()["dev_code"]
+        code = await _start_code(client, "rotate-owner@example.dev", sent_otps)
         identity = (await client.post("/auth/email/verify", json={
             "email": "rotate-owner@example.dev", "code": code,
         })).json()["token"]
