@@ -1,1 +1,1 @@
-file:///workspace/mv-pr/content_only_m3.txt
+!include /workspace/mv-pr/content_only_m3.txt
