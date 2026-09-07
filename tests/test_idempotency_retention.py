@@ -128,7 +128,7 @@ async def test_counts_accumulate_from_page_metadata_not_aggregate_queries(client
     assert set(remaining) == {f"live-{n}" for n in range(4)}
 
 
-async def test_partial_sweep_exits_nonzero_without_final_count(clients, capsys):
+async def test_partial_sweep_exits_nonzero_without_final_count(clients, capsys, monkeypatch):
     """A bounded partial sweep must not attempt a final aggregate count.
 
     When max_batches is reached before traversal completes, the function returns
@@ -142,7 +142,12 @@ async def test_partial_sweep_exits_nonzero_without_final_count(clients, capsys):
     import json
     from types import SimpleNamespace
     from treg.worker import _idempotency_prune
+    from cryptography.fernet import Fernet
+    from treg.config import get_settings
 
+    # The real worker verifies production key configuration, including on Postgres CI.
+    monkeypatch.setenv("TREG_SECRET_KEY", Fernet.generate_key().decode())
+    get_settings.cache_clear()
     exit_code = await _idempotency_prune(SimpleNamespace(
         batch_size=2, max_batches=2, pause_seconds=0, dry_run=False,
     ))
