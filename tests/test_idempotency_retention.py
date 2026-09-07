@@ -1,6 +1,6 @@
 """Global retention without breaking live paid-response replay."""
 import pytest
-from sqlalchemy import delete, func
+from sqlalchemy import delete, event, func
 from sqlmodel import select
 
 from treg.application.call import idempotency
@@ -106,7 +106,18 @@ async def test_counts_accumulate_from_page_metadata_not_aggregate_queries(client
     for n in range(4):
         await _seed_answer(clients, f"live-{n}")
 
-    result = await idempotency.prune_expired_idempotency(batch_size=3, pause_s=0)
+    async with session_maker() as db:
+        engine = db.bind.sync_engine
+
+    def reject_unbounded_count(conn, cursor, statement, parameters, context, executemany):
+        sql = statement.lower()
+        assert not ("count(" in sql and "idempotentcall" in sql), "unbounded retention COUNT"
+
+    event.listen(engine, "before_cursor_execute", reject_unbounded_count)
+    try:
+        result = await idempotency.prune_expired_idempotency(batch_size=3, pause_s=0)
+    finally:
+        event.remove(engine, "before_cursor_execute", reject_unbounded_count)
 
     assert result.eligible == 6, "eligible must be accumulated from page metadata"
     assert result.deleted == 6, "all eligible rows should be deleted"
@@ -117,7 +128,7 @@ async def test_counts_accumulate_from_page_metadata_not_aggregate_queries(client
     assert set(remaining) == {f"live-{n}" for n in range(4)}
 
 
-async def test_partial_sweep_exits_nonzero_without_final_count(clients):
+async def test_partial_sweep_exits_nonzero_without_final_count(clients, capsys):
     """A bounded partial sweep must not attempt a final aggregate count.
 
     When max_batches is reached before traversal completes, the function returns
@@ -128,9 +139,16 @@ async def test_partial_sweep_exits_nonzero_without_final_count(clients):
     for n in range(10):
         await _seed_answer(clients, f"expired-{n}", ttl_s=-3600)
 
-    result = await idempotency.prune_expired_idempotency(
-        batch_size=2, max_batches=2, pause_s=0
-    )
+    import json
+    from types import SimpleNamespace
+    from treg.worker import _idempotency_prune
+
+    exit_code = await _idempotency_prune(SimpleNamespace(
+        batch_size=2, max_batches=2, pause_seconds=0, dry_run=False,
+    ))
+    result = SimpleNamespace(**json.loads(capsys.readouterr().out.splitlines()[-1]))
+    assert exit_code == 1
+
 
     assert result.deleted == 4, "should delete 2 batches × 2 rows"
     assert result.complete is False, "traversal incomplete"
