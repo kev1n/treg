@@ -224,7 +224,9 @@ uses this metadata, never the encrypted token's shape.
   unbounded scan searching for expired matches. The DELETE applies the expiry and status guards.
   Postgres transactions use a 1-second lock timeout and 15-second statement timeout. A failed batch
   rolls back, earlier batches remain committed, and the next run retries remaining rows. `--dry-run`
-  reports eligibility without writes; a bounded run with remaining eligible rows exits nonzero.
+  counts eligible rows without writes. Counts accumulate within the metadata-only ID pages, never
+  from a separate full-table aggregate; `complete` reports whether traversal reached the fixed upper
+  ID. An interrupted or bounded partial sweep exits nonzero and the next run starts from the front.
   No retention index or schema migration is needed for this single cursor traversal. Ordinary vacuum
   makes deleted storage reusable; the command does not run table-rewriting or vacuum operations.
 

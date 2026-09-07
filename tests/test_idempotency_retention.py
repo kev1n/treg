@@ -18,7 +18,7 @@ async def test_cleanup_preserves_live_replay_and_pending_claims(clients, platfor
     dry = await idempotency.prune_expired_idempotency(dry_run=True)
     assert dry.eligible == 5 and dry.deleted == 0
     result = await idempotency.prune_expired_idempotency(batch_size=2, pause_s=0)
-    assert (result.deleted, result.batches, result.remaining) == (5, 4, 0)
+    assert (result.deleted, result.batches, result.complete) == (5, 4, True)
     async with session_maker() as db:
         assert set((await db.scalars(select(IdempotentCall.key))).all()) == {
             "valid", "pending", "expired-pending"}
@@ -36,9 +36,9 @@ async def test_bounded_sweep_resumes_next_run(clients):
     for n in range(5):
         await _seed_answer(clients, f"expired-{n}", ttl_s=-3600)
     result = await idempotency.prune_expired_idempotency(batch_size=2, max_batches=1, pause_s=0)
-    assert (result.deleted, result.remaining) == (2, 3)
+    assert (result.deleted, result.complete) == (2, False)
     result = await idempotency.prune_expired_idempotency(batch_size=2, pause_s=0)
-    assert (result.deleted, result.remaining) == (3, 0)
+    assert (result.deleted, result.complete) == (3, True)
 
 
 async def test_concurrent_cleanup_and_new_rows_do_not_extend_sweep(clients, monkeypatch):
@@ -59,7 +59,7 @@ async def test_concurrent_cleanup_and_new_rows_do_not_extend_sweep(clients, monk
 
     monkeypatch.setattr(idempotency.asyncio, "sleep", interleave)
     result = await idempotency.prune_expired_idempotency(batch_size=2, pause_s=0)
-    assert result.deleted == 3 and result.remaining == 0
+    assert result.deleted == 3 and result.complete is True
     async with session_maker() as db:
         assert list((await db.scalars(select(IdempotentCall.key))).all()) == ["inserted-later"]
 
@@ -84,4 +84,4 @@ async def test_live_pages_do_not_stop_the_expiry_sweep(clients):
         await _seed_answer(clients, f"live-{n}")
     await _seed_answer(clients, "expired-tail", ttl_s=-3600)
     result = await idempotency.prune_expired_idempotency(batch_size=2, pause_s=0)
-    assert (result.deleted, result.batches, result.remaining) == (1, 3, 0)
+    assert (result.deleted, result.batches, result.complete) == (1, 3, True)

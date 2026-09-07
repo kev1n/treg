@@ -216,7 +216,7 @@ async def _idempotency_prune(args) -> int:
         max_batches=args.max_batches, dry_run=args.dry_run,
     )
     print(json.dumps(asdict(result), default=str, sort_keys=True))
-    return 0 if args.dry_run or result.remaining == 0 else 1
+    return 0 if result.complete else 1
 
 
 def main(argv: list[str] | None = None) -> int:

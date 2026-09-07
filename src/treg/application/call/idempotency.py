@@ -233,7 +233,7 @@ class IdempotencyPruneResult:
     eligible: int
     deleted: int
     batches: int
-    remaining: int
+    complete: bool
 
 
 async def prune_expired_idempotency(*, batch_size: int = 200, pause_s: float = 0.25,
@@ -265,33 +265,37 @@ async def prune_expired_idempotency(*, batch_size: int = 200, pause_s: float = 0
             IdempotentCall.expires_at < cutoff,
             IdempotentCall.id <= upper_id,
         )
-        eligible = await db.scalar(select(func.count()).select_from(IdempotentCall).where(*eligible_where))
-    if dry_run:
-        return IdempotencyPruneResult(cutoff, upper_id, eligible, 0, 0, eligible)
-
-    cursor = deleted = batches = 0
+    cursor = eligible = deleted = batches = 0
+    complete = False
     while batches < max_batches:
         async with make_session() as db:
             await bound(db)
-            ids = list((await db.scalars(select(IdempotentCall.id).where(
+            # Select metadata only: never load the response body to decide retention.
+            rows = (await db.execute(select(
+                IdempotentCall.id, IdempotentCall.status, IdempotentCall.expires_at,
+            ).where(
                 IdempotentCall.id <= upper_id, IdempotentCall.id > cursor,
-            ).order_by(IdempotentCall.id).limit(batch_size))).all())
-            if not ids:
+            ).order_by(IdempotentCall.id).limit(batch_size))).all()
+            if not rows:
+                complete = True
                 break
-            removed = (await db.execute(delete(IdempotentCall).where(
-                *eligible_where, IdempotentCall.id.in_(ids),
-            ).returning(IdempotentCall.id))).all()
-            await db.commit()
-            cursor = ids[-1]
-            deleted += len(removed)
+            ids = [row.id for row in rows if row.status == "done" and row.expires_at < cutoff]
+            eligible += len(ids)
+            if ids and not dry_run:
+                removed = (await db.execute(delete(IdempotentCall).where(
+                    *eligible_where, IdempotentCall.id.in_(ids),
+                ).returning(IdempotentCall.id))).all()
+                await db.commit()
+                deleted += len(removed)
+            cursor = rows[-1].id
             batches += 1
+            complete = len(rows) < batch_size or cursor == upper_id
         # No connection is held during the throttle pause.
         if batches % 50 == 0:
             logging.getLogger("treg.idempotency").info(
                 "idempotency prune: batches=%d deleted=%d cursor=%d", batches, deleted, cursor)
+        if complete:
+            break
         await asyncio.sleep(pause_s)
 
-    async with make_session() as db:
-        await bound(db)
-        remaining = await db.scalar(select(func.count()).select_from(IdempotentCall).where(*eligible_where))
-    return IdempotencyPruneResult(cutoff, upper_id, eligible, deleted, batches, remaining)
+    return IdempotencyPruneResult(cutoff, upper_id, eligible, deleted, batches, complete)
