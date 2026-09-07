@@ -1,1 +1,1 @@
-https://raw.githubusercontent.com/superdesigndev/treg/main/tests/test_oauth_providers_m3.py
+@/workspace/mv-pr/content_only_m3.txt
