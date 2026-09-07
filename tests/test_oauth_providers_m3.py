@@ -1,1 +1,1 @@
-@/workspace/mv-pr/content_only_m3.txt
+PLACEHOLDER_REPLACE_WITH_FILE
