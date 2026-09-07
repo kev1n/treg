@@ -63,21 +63,14 @@ page_timeouts. Counts accumulate from bounded metadata pages rather than full-ta
 Incomplete bounded runs exit nonzero so cron failures are visible. Render serializes runs of this cron.
 Retention uses the existing table and primary key; it requires no migration or web-service restart.
 
-**Timeout resilience.** The page SELECT uses a 60s statement timeout; the DELETE uses 15s. After a
-large first prune or any mass delete, dead tuple bloat can make even a bounded page SELECT slow
-(the executor skips invisible rows to find N visible ones). A single page timeout does not fail the
-run: the cursor advances by batch_size (the page is skipped) and the sweep continues. The next cron
-run starts from the front, retrying skipped pages against fresh autovacuum state. Three consecutive
-timeouts do stop the run to prevent infinite loops. The `page_timeouts` field in the result JSON
-tracks how many pages were skipped, useful for alerting on persistent bloat.
+**Timeout resilience.** Page SELECTs use a 60-second timeout; DELETEs use 15 seconds. On a page
+timeout the cursor advances by batch size and processing continues, but the result remains incomplete
+and the worker exits nonzero. Three consecutive timeouts stop traversal. `page_timeouts` counts
+skipped pages; the next run starts from the beginning and retries their rows.
 
-**VACUUM after large prunes.** Routine hourly cleanup stays within autovacuum thresholds. After an
-abnormally large delete ratio (e.g. an initial backlog prune removing tens of thousands of rows),
-manually run `VACUUM (ANALYZE) idempotentcall` once. This reclaims dead tuple space and updates
-planner statistics so subsequent page SELECTs do not need to skip many invisible rows. The code
-tolerates some bloat via the 60s timeout and cursor-advance retry, but persistent bloat degrades
-throughput. A one-time manual VACUUM is the proper fix; the code does not depend on it to avoid
-alerts — it survives bloat, but bloat is not the intended steady state.
+**VACUUM after large prunes.** Routine cleanup leaves vacuuming to Postgres autovacuum. After a
+large manual backlog cleanup, use throttled `VACUUM (ANALYZE, TRUNCATE FALSE) idempotentcall`
+if needed. Dead tuples can slow metadata scans even with bounded page sizes.
 
 **Snapshot blockers.** Check old `pg_stat_activity.backend_xmin` snapshots when dead tuples persist
 after vacuum: a long-running read-only report blocked reclamation during the September 2026 cleanup.

@@ -2,7 +2,6 @@
 import pytest
 from sqlalchemy import delete, event, func
 from sqlmodel import select
-from unittest.mock import AsyncMock, patch
 
 from treg.application.call import idempotency
 from treg.infra.db import session_maker
@@ -174,8 +173,7 @@ async def test_page_timeout_advances_cursor_and_continues(clients, monkeypatch):
     autovacuum cleans the bloat. Consecutive timeouts (3+) do fail the run to avoid infinite
     loops on persistent issues.
 
-    Contract: page_timeouts counts skipped pages; a single timeout does not set complete=False
-    unless the sweep genuinely cannot finish.
+    Contract: page_timeouts counts skipped pages; any skipped page leaves the sweep incomplete.
     """
     for n in range(6):
         await _seed_answer(clients, f"expired-{n}", ttl_s=-3600)
@@ -203,6 +201,7 @@ async def test_page_timeout_advances_cursor_and_continues(clients, monkeypatch):
 
     assert result.page_timeouts == 1, "one page should have timed out"
     assert result.deleted >= 2, "should have deleted rows from non-timeout pages"
+    assert result.complete is False, "skipped rows must not be reported as a successful sweep"
 
 
 async def test_consecutive_page_timeouts_stop_sweep(clients, monkeypatch):

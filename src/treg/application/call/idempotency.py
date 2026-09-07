@@ -255,8 +255,8 @@ async def prune_expired_idempotency(*, batch_size: int = 200, pause_s: float = 0
     make even a bounded page SELECT slow: the executor must skip invisible rows to find N visible
     ones. The page SELECT uses a 60s timeout; if that expires, the cursor advances by batch_size
     (the page is skipped, not retried) and the sweep continues. The next cron run starts from the
-    front, so skipped pages are retried on fresh autovacuum state. A single page timeout is not a
-    run failure; the run fails only when every remaining page times out consecutively.
+    front, so skipped pages are retried on fresh autovacuum state. Any skipped page makes the
+    result incomplete, even when later pages succeed; three consecutive timeouts stop traversal.
 
     Ops note: after a large initial prune, run `VACUUM (ANALYZE) idempotentcall` once. Autovacuum
     handles routine churn; manual vacuum is only needed after an abnormally large delete ratio.
@@ -343,4 +343,6 @@ async def prune_expired_idempotency(*, batch_size: int = 200, pause_s: float = 0
             break
         await asyncio.sleep(pause_s)
 
-    return IdempotencyPruneResult(cutoff, upper_id, eligible, deleted, batches, complete, page_timeouts)
+    return IdempotencyPruneResult(
+        cutoff, upper_id, eligible, deleted, batches, complete and page_timeouts == 0, page_timeouts,
+    )

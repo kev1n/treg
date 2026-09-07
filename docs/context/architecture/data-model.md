@@ -223,12 +223,12 @@ uses this metadata, never the encrypted token's shape.
   ID pages are selected before expiry filtering, so a page of live responses cannot force an
   unbounded scan searching for expired matches. The DELETE applies the expiry and status guards.
   Postgres transactions use a 1-second lock timeout; the page SELECT uses a 60-second statement
-  timeout and the DELETE uses 15 seconds. A page timeout does not fail the run: the cursor advances
+  timeout and the DELETE uses 15 seconds. On a page timeout the cursor advances
   by batch_size and the sweep continues. Three consecutive page timeouts stop the run to prevent
-  infinite loops. The `page_timeouts` field tracks skipped pages. A failed DELETE batch rolls back,
+  infinite loops. The `page_timeouts` field tracks skipped pages; any skipped page makes the worker exit nonzero. A failed DELETE batch rolls back,
   earlier batches remain committed, and the next run retries remaining rows. `--dry-run` counts
   eligible rows without writes. Counts accumulate within the metadata-only ID pages, never from a
-  separate full-table aggregate; `complete` reports whether traversal reached the fixed upper ID.
+  separate full-table aggregate; `complete` requires traversal to reach the fixed upper ID without skipped pages.
   An interrupted or bounded partial sweep exits nonzero and the next run starts from the front.
   No retention index or schema migration is needed for this single cursor traversal. After a large
   first prune, run `VACUUM (ANALYZE) idempotentcall` once to reclaim dead tuple space; routine hourly
