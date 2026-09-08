@@ -380,6 +380,9 @@ def test_ttl_fixed_guesses_and_vendor_ceiling():
 @pytest.fixture
 def serve(platform_on, monkeypatch):
     monkeypatch.setattr(get_settings(), "archive_mode", "serve")
+    monkeypatch.setattr(get_settings(), "archive_serve_endpoints", EP)
+    monkeypatch.setattr(get_settings(), "archive_serve_percent", 100)
+    monkeypatch.setattr(get_settings(), "archive_refresh_daily_cap", 50)
     monkeypatch.setitem(catalog_store.load().by_id[EP], "cache", "transient")
 
 
@@ -449,6 +452,8 @@ async def test_a_stale_snapshot_is_not_served(clients: AsyncClient, serve, monke
 async def test_default_forbidden_never_serves(clients: AsyncClient, platform_on, monkeypatch):
     monkeypatch.setattr(get_settings(), "archive_mode", "serve")
     monkeypatch.setattr(get_settings(), "archive_default_policy", "forbidden")
+    monkeypatch.setattr(get_settings(), "archive_serve_endpoints", EP)
+    monkeypatch.setattr(get_settings(), "archive_serve_percent", 100)
     # With keep-all switched off, an unjudged entry is recorded hash-only and never served.
     await clients.get(f"/call/{EP}?aweme_id=7")
     await archive.drain()
@@ -500,7 +505,26 @@ async def test_changed_refetch_shrinks_the_timer(clients: AsyncClient, shadow, m
     assert keys[0].change_seen == 1 and keys[0].ttl_s == 1800   # 3600 × 0.5
 
 
+@pytest.mark.parametrize("comparison", ["strict", "typo"])
+async def test_repeated_business_change_is_strict_by_default(clients: AsyncClient, shadow, monkeypatch,
+                                                            comparison):
+    monkeypatch.setattr(get_settings(), "archive_comparison_mode", comparison)
+    from tests.test_marketplace_call import _fake_relay
+    for revenue in (100, 200, 300):
+        body = json.dumps({"company": "A", "country": "US", "currency": "USD",
+                           "year": 2026, "revenue": revenue}).encode()
+        monkeypatch.setattr(call_service, "relay", _fake_relay(200, body))
+        response = await clients.get(f"/call/{EP}?aweme_id=7")
+        assert response.status_code == 200 and response.content == body
+        await archive.drain()
+    keys, snaps = await _rows()
+    assert keys[0].change_seen == 2 and keys[0].stable_seen == 0
+    assert keys[0].ttl_s == 900
+    assert len(snaps) == 3 and all(s.body is not None for s in snaps)
+
+
 async def test_repeated_noise_counts_as_stable(clients: AsyncClient, shadow, monkeypatch):
+    monkeypatch.setattr(get_settings(), "archive_comparison_mode", "legacy_noise")
     monkeypatch.setitem(catalog_store.load().by_id[EP], "cache", "transient")
     from tests.test_marketplace_call import _fake_relay
     bodies = [json.dumps({"req_id": i, "ts": i * 10,
@@ -630,8 +654,11 @@ async def test_admin_archive_keys_endpoint(clients: AsyncClient, serve, monkeypa
     get_settings.cache_clear()
     try:
         monkeypatch.setattr(get_settings(), "archive_mode", "serve")
+        monkeypatch.setattr(get_settings(), "archive_serve_endpoints", EP)
+        monkeypatch.setattr(get_settings(), "archive_serve_percent", 100)
         monkeypatch.setitem(catalog_store.load().by_id[EP], "cache", "transient")
         await clients.get(f"/call/{EP}?aweme_id=7")   # live, recorded
+        await archive.drain()
         await clients.get(f"/call/{EP}?aweme_id=7")   # hit
         await archive.drain()
         await audit.drain()
@@ -668,6 +695,8 @@ async def test_admin_archive_body_viewer(clients: AsyncClient, serve, monkeypatc
     get_settings.cache_clear()
     try:
         monkeypatch.setattr(get_settings(), "archive_mode", "serve")
+        monkeypatch.setattr(get_settings(), "archive_serve_endpoints", EP)
+        monkeypatch.setattr(get_settings(), "archive_serve_percent", 100)
         monkeypatch.setitem(catalog_store.load().by_id[EP], "cache", "transient")
         await clients.get(f"/call/{EP}?aweme_id=7", headers={"Cache-Control": "no-cache"})
         await clients.get(f"/call/{EP}?aweme_id=7", headers={"Cache-Control": "no-cache"})
@@ -1169,3 +1198,88 @@ async def test_pending_bytes_released_when_task_completes(monkeypatch):
         await aio.gather(*archive._pending, return_exceptions=True)
         archive._pending.clear()
         monkeypatch.setattr(archive, "_pending_bytes", 0)
+
+
+@pytest.mark.parametrize("endpoints,percent,reason", [
+    ("", 100, "endpoint_disabled"), (EP, 0, "rollout_disabled"),
+    (EP, 101, "rollout_disabled"), (EP, -1, "rollout_disabled"),
+])
+async def test_rollout_bypass_never_queries_cache(clients, serve, monkeypatch,
+                                                 endpoints, percent, reason):
+    await clients.get(f"/call/{EP}?aweme_id=7")
+    await archive.drain()
+    monkeypatch.setattr(get_settings(), "archive_serve_endpoints", endpoints)
+    monkeypatch.setattr(get_settings(), "archive_serve_percent", percent)
+    events = []
+    monkeypatch.setattr(call_service.analytics, "capture",
+                        lambda who, event, props, **kw: events.append((event, props)))
+    r = await clients.get(f"/call/{EP}?aweme_id=7")
+    assert r.status_code == 200 and "x-treg-cache" not in r.headers
+    props = [p for e, p in events if e == "tool_called"][-1]
+    assert props["cache_outcome"] == reason
+    assert not archive.worker_enabled()
+
+
+def test_rollout_cohorts_are_stable_and_nested(monkeypatch):
+    monkeypatch.setattr(get_settings(), "archive_serve_endpoints", EP)
+    monkeypatch.setattr(get_settings(), "archive_serve_percent", 10)
+    first = {str(i) for i in range(1000) if archive.rollout_reason(EP, str(i)) == "selected"}
+    assert 50 < len(first) < 150
+    assert first == {str(i) for i in range(1000)
+                     if archive.rollout_reason(EP, str(i)) == "selected"}
+    monkeypatch.setattr(get_settings(), "archive_serve_percent", 50)
+    second = {str(i) for i in range(1000) if archive.rollout_reason(EP, str(i)) == "selected"}
+    assert first < second
+    assert archive.rollout_reason(EP, "") == "missing_cohort"
+
+
+async def test_cache_reports_miss_hit_bypass_and_lookup_failure(clients, serve, monkeypatch):
+    events = []
+    monkeypatch.setattr(call_service.analytics, "capture",
+                        lambda who, event, props, **kw: events.append((event, props)))
+    await clients.get(f"/call/{EP}?aweme_id=7")
+    await archive.drain()
+    await clients.get(f"/call/{EP}?aweme_id=7")
+    await clients.get(f"/call/{EP}?aweme_id=7", headers={"Cache-Control": "no-cache"})
+    async def broken(**kwargs):
+        raise RuntimeError("lookup failed")
+    monkeypatch.setattr(archive, "lookup", broken)
+    response = await clients.get(f"/call/{EP}?aweme_id=7")
+    assert response.status_code == 200
+    props = [p for e, p in events if e == "tool_called"]
+    assert [p["cache_outcome"] for p in props] == [
+        "key_missing", "hit", "caller_bypass", "lookup_error"]
+    assert props[1]["cache_age_s"] >= 0
+    assert props[1]["cache_window_s"] == 3600
+    for p in props:
+        assert p["cache_lookup_ms"] >= 0
+        assert p["cache_comparison_mode"] == "strict"
+        assert p["cache_ttl_policy"] == "adaptive"
+        assert not any(k in p for k in ("key_hash", "volatile_paths", "body", "request_headers"))
+
+
+@pytest.mark.parametrize("timer,outcome", [
+    (30 * 86400, "hit"), (3600, "stale"), (archive.TTL_NEVER, "ttl_disabled"),
+])
+async def test_strict_comparison_preserves_existing_ttl(clients, serve, monkeypatch, timer, outcome):
+    from datetime import timedelta
+    await clients.get(f"/call/{EP}?aweme_id=7")
+    await archive.drain()
+    async with session_maker() as session:
+        key = (await session.execute(select(ArchiveKey))).scalars().one()
+        snap = (await session.execute(select(ArchiveSnapshot))).scalars().one()
+        key.ttl_s = timer
+        snap.fetched_at -= timedelta(hours=2)
+        session.add(key)
+        session.add(snap)
+        await session.commit()
+    events = []
+    monkeypatch.setattr(call_service.analytics, "capture",
+                        lambda who, event, props, **kw: events.append((event, props)))
+    r = await clients.get(f"/call/{EP}?aweme_id=7")
+    assert r.status_code == 200
+    assert (r.headers.get("x-treg-cache") == "hit") == (outcome == "hit")
+    props = [p for e, p in events if e == "tool_called"][-1]
+    assert props["cache_outcome"] == outcome
+    if timer > 0:
+        assert props["cache_window_s"] == timer

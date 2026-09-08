@@ -577,8 +577,14 @@ async def _execute_call(request: _ApplicationRequest, upstream_client: httpx.Asy
     audit_org_id, audit_email, audit_tool = caller.org_id, caller.email, tool.name
     audit_slug = caller.org.slug  # PostHog group key — must match the browser's posthog.group('team', slug)
 
+    cache_diagnostics: dict = {"cache_outcome": "not_attempted", "cache_mode": archive.mode(),
+                               "cache_comparison_mode": archive.comparison_mode(),
+                               "cache_ttl_policy": "adaptive",
+                               "cache_rollout_percent": get_settings().archive_serve_percent}
+
     def _capture(props: dict) -> None:
-        analytics.capture(audit_email, "tool_called", props, groups={"team": audit_slug})
+        analytics.capture(audit_email, "tool_called", props | cache_diagnostics,
+                          groups={"team": audit_slug})
 
     def _overflow_event(props: dict, outcome, charged: int) -> dict:
         """What a caller rescued by overflow actually experienced: the child's answer at the
@@ -870,16 +876,22 @@ async def _execute_call(request: _ApplicationRequest, upstream_client: httpx.Asy
             served = None
             # A probe must reach the vendor: an archived answer proves nothing about capacity.
             if mk is not None and mk.metered and mk.probe_lock_id is None and archive.serving():
+                lookup_started = time.monotonic()
                 try:
                     served = await archive.lookup(
                         method=request.method, endpoint_id=mk.endpoint_id,
                         url=archive.key_url(upstream_url,
                                             list(request.query_params.multi_items()),
                                             drop_params or set()),
-                        caller_body=caller_body, request_headers=request.headers)
+                        caller_body=caller_body, request_headers=request.headers,
+                        cohort=str(audit_org_id), diagnostics=cache_diagnostics)
                 except Exception:  # noqa: BLE001 — lookup swallows internally; this catches even a
                     served = None  # fault in its own plumbing. Cache trouble must cost a vendor
                     #              call, never a 500.
+                    cache_diagnostics["cache_outcome"] = "lookup_error"
+                finally:
+                    cache_diagnostics["cache_lookup_ms"] = round(
+                        (time.monotonic() - lookup_started) * 1000, 3)
             if served is not None:
                 body = served["body"]
                 served_hit = True

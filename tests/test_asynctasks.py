@@ -98,6 +98,8 @@ async def test_generation_is_never_replayed_across_orgs(
     clients: AsyncClient, monkeypatch, replicate_platform, legacy_cache,
 ):
     monkeypatch.setattr(get_settings(), "archive_mode", "serve")
+    monkeypatch.setattr(get_settings(), "archive_serve_endpoints", EP)
+    monkeypatch.setattr(get_settings(), "archive_serve_percent", 100)
     entry = catalog_store.load().by_id[EP]
     if legacy_cache:
         monkeypatch.setitem(entry, "cache", "transient")

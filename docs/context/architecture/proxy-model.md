@@ -49,6 +49,13 @@ Named catalog calls with authorization metadata select the provider and grant me
 comparing hosts. This separates Facebook and Instagram tools sharing `graph.facebook.com`;
 the resulting tool enters the same relay without provider-specific relay logic.
 
+Cache experiment metadata is attached to the existing `tool_called` event by the call-service
+capture funnel: outcome/reason, comparison and TTL policy, rollout percentage, lookup duration,
+and candidate age/window. It contains no response/request content or cache key. The stable
+team/endpoint rollout runs before archive DB lookup; unselected calls retain the normal relay
+and money path. See [archive](archive.md#conservative-comparison-and-controlled-serving-2026-09-08)
+for controls and metric denominators. This does not remove authorization/reserve/settle DB work.
+
 ## The faithful-relay contract
 `relay()` alters **only three things**; everything else is verbatim (method, path, all query params
 incl. duplicates, headers, cookies, body bytes):

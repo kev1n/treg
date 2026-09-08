@@ -295,6 +295,13 @@ class Settings(BaseSettings):
     # fresh hits from the store). Any other value degrades to "off" — a typo must disable, never
     # enable. Staged deliberately so production can sit in "shadow" while phase 0 measures.
     archive_mode: str = "off"
+    # Strict compares raw bytes. The old heuristic is an explicit diagnostic opt-in only;
+    # unknown values also select strict. It never changes stored response bytes.
+    archive_comparison_mode: str = "strict"  # strict | legacy_noise
+    # Exact endpoint IDs, comma-separated. Empty means no serving, even in serve mode.
+    archive_serve_endpoints: str = ""
+    # Stable team/endpoint cohorts; 0 disables serving, 100 includes every team.
+    archive_serve_percent: int = 0
     # Bodies above this size are hash-counted but never stored (skipped whole, not truncated):
     # the archive is for API JSON answers, not downloads. Statistics still record size_bytes.
     archive_max_body_bytes: int = 2_000_000
@@ -307,7 +314,7 @@ class Settings(BaseSettings):
     # refresh calls ONE provider may spend per UTC day. A refresh is treg's own vendor spend with
     # no caller attached, so the cap is the brake — 0 disables refreshing without touching serving.
     archive_refresh_interval_s: int = 300
-    archive_refresh_daily_cap: int = 50
+    archive_refresh_daily_cap: int = 0
     # The pruner (profit-shaped: a stored body is inventory, and inventory that cannot sell goes
     # first). Runs whenever the archive records (shadow or serve); 0 batch disables it.
     archive_prune_interval_s: int = 3600       # one pass per hour

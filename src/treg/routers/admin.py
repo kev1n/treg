@@ -411,6 +411,12 @@ async def admin_archive(
             "kept_bytes": st.kept_bytes,
         })
     report = {"mode": archive_mod.mode(),
+              "comparison_mode": archive_mod.comparison_mode(),
+              "ttl_policy": "adaptive",
+              "serve_endpoints": sorted(archive_mod.serve_endpoints()),
+              "serve_percent": get_settings().archive_serve_percent,
+              # Cumulative counters include observations from older comparison policies.
+              "change_statistics_scope": "lifetime_mixed_comparison_modes",
             "worker_on": archive_mod.worker_enabled(),
             "refresh_daily_cap": get_settings().archive_refresh_daily_cap,
             "keys": int(totals[0]), "snapshots": int(totals[1]),

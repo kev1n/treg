@@ -56,6 +56,28 @@ def serving() -> bool:
     return mode() == "serve"
 
 
+def comparison_mode() -> str:
+    return ("legacy_noise" if get_settings().archive_comparison_mode.strip().lower()
+            == "legacy_noise" else "strict")
+
+
+def serve_endpoints() -> set[str]:
+    return {value.strip() for value in get_settings().archive_serve_endpoints.split(",")
+            if value.strip()}
+
+
+def rollout_reason(endpoint_id: str, cohort: str) -> str:
+    if endpoint_id not in serve_endpoints():
+        return "endpoint_disabled"
+    percent = get_settings().archive_serve_percent
+    if not 0 < percent <= 100:
+        return "rollout_disabled"
+    if not cohort:
+        return "missing_cohort"
+    bucket = int(hashlib.sha256(f"{endpoint_id}:{cohort}".encode()).hexdigest()[:8], 16) % 100
+    return "selected" if bucket < percent else "control"
+
+
 # ---------------------------------------------------------------------------------------------
 # Eligibility (gates 1 + 2; gate 3 — the tier — is the caller's context and is checked at the
 # hook site, where "metered platform call" is already an established fact)
@@ -573,12 +595,15 @@ async def _store_locked(
                 if carrier is not None:      # bytes already on file — reference, don't repeat
                     snap.body, snap.body_of = None, carrier
             else:
-                old_body = _unpack(newest.body, newest.enc)
-                if old_body is None and newest.body_of is not None:
-                    old = await s.get(ArchiveSnapshot, newest.body_of)
-                    old_body = _unpack(old.body, old.enc) if old is not None else None
-                if _noise_only(old_body, body, key):
-                    # Learned request ids / server timestamps moved; the data did not.
+                noise = False
+                if comparison_mode() == "legacy_noise":
+                    old_body = _unpack(newest.body, newest.enc)
+                    if old_body is None and newest.body_of is not None:
+                        old = await s.get(ArchiveSnapshot, newest.body_of)
+                        old_body = _unpack(old.body, old.enc) if old is not None else None
+                    noise = _noise_only(old_body, body, key)
+                if noise:
+                    # Legacy heuristic only: repeated fields can also be real business data.
                     key.stable_seen += 1
                     learn(key, stable=True, entry=entry)
                 else:
@@ -820,6 +845,8 @@ async def lookup(
     url: str,
     caller_body: bytes,
     request_headers,
+    cohort: str = "",
+    diagnostics: dict | None = None,
 ) -> dict[str, Any] | None:
     """A fresh stored answer for this exact question, or None (= make the live call).
 
@@ -827,9 +854,19 @@ async def lookup(
     snapshot, stale snapshot, bytes not on file. The age check runs against the newest snapshot's
     own fetch time, and the window is min(endpoint TTL, caller X-Treg-Max-Age). Returns the
     verbatim stored bytes plus what the hook needs for headers: fetched_at and age_s."""
+    def miss(reason: str):
+        if diagnostics is not None:
+            diagnostics["cache_outcome"] = reason
+        return None
+
     try:
-        if not serving() or caller_forces_live(request_headers):
-            return None
+        if not serving():
+            return miss("mode_disabled")
+        if caller_forces_live(request_headers):
+            return miss("caller_bypass")
+        selection = rollout_reason(endpoint_id, cohort)
+        if selection != "selected":
+            return miss(selection)
         from sqlalchemy import select
 
         from .domain.catalog import store as catalog_store
@@ -841,7 +878,7 @@ async def lookup(
 
         entry = catalog_store.load().by_id.get(endpoint_id)
         if not storable(entry):
-            return None
+            return miss("policy_excluded")
         wanted = caller_max_age_s(request_headers)
 
         kh = cache_key(method, endpoint_id, url, caller_body, {
@@ -850,30 +887,32 @@ async def lookup(
             key = (await s.execute(
                 select(ArchiveKey).where(ArchiveKey.key_hash == kh))).scalars().one_or_none()
             if key is None:
-                return None
-            if key.ttl_s == TTL_NEVER:   # the key marked itself: changes on every fetch
-                return None
-            # The learned per-key timer when one exists, else the fixed phase-1 guess; the
-            # caller's own bar tightens, never widens.
+                return miss("key_missing")
+            if key.ttl_s == TTL_NEVER:
+                return miss("ttl_disabled")
             window = key.ttl_s if key.ttl_s > 0 else ttl_for(entry)
             if wanted is not None:
                 window = min(window, wanted)
             if window <= 0:
-                return None
+                return miss("ttl_disabled")
             newest = (await s.execute(
                 select(ArchiveSnapshot).where(ArchiveSnapshot.key_id == key.id)
                 .order_by(ArchiveSnapshot.version.desc()).limit(1))).scalars().first()
             if newest is None or not (200 <= newest.status_code < 300):
-                return None
+                return miss("snapshot_unavailable")
             age_s = int((_utcnow() - newest.fetched_at).total_seconds())
+            if diagnostics is not None:
+                diagnostics.update(cache_age_s=age_s, cache_window_s=window)
             if age_s < 0 or age_s > window:
-                return None
+                return miss("stale")
             body = _unpack(newest.body, newest.enc)
             if body is None and newest.body_of is not None:  # deduplicated — follow the carrier
                 carrier = await s.get(ArchiveSnapshot, newest.body_of)
                 body = _unpack(carrier.body, carrier.enc) if carrier is not None else None
             if body is None:  # hash-only history (policy or size cap at record time)
-                return None
+                return miss("body_missing")
+        if diagnostics is not None:
+            diagnostics["cache_outcome"] = "hit"
         _touch(kh)
         return {"body": body, "media_type": newest.media_type,
                 "status_code": newest.status_code, "fetched_at": newest.fetched_at,
@@ -881,8 +920,8 @@ async def lookup(
                 # Identities of the served answer, for the audit row's call→archive link.
                 "key_hash": kh, "content_hash": newest.content_hash, "version": newest.version}
     except Exception:  # noqa: BLE001 — a lookup fault must degrade to a live call, never a 500
-        _log.warning("archive lookup failed for %s — serving live", endpoint_id, exc_info=True)
-        return None
+        _log.warning("archive lookup failed for %s - serving live", endpoint_id, exc_info=True)
+        return miss("lookup_error")
 
 
 def _touch(key_hash: str) -> None:
@@ -1027,7 +1066,8 @@ _DUE_SHARE = 0.8
 
 
 def worker_enabled() -> bool:
-    return serving() and get_settings().archive_refresh_daily_cap > 0
+    return (serving() and get_settings().archive_refresh_daily_cap > 0
+            and bool(serve_endpoints()) and 0 < get_settings().archive_serve_percent <= 100)
 
 
 async def refresh_worker(client) -> None:
@@ -1061,7 +1101,8 @@ async def refresh_once(client) -> int:
     async with background_session_maker() as s:
         candidates = (await s.execute(
             select(ArchiveKey)
-            .where(ArchiveKey.ttl_s > 0, ArchiveKey.req_url != "",
+            .where(ArchiveKey.endpoint_id.in_(serve_endpoints()), ArchiveKey.ttl_s > 0,
+                   ArchiveKey.req_url != "",
                    ArchiveKey.last_requested_at.is_not(None))
             .order_by(ArchiveKey.fetched_at))).scalars().all()
         # Today's refresh spend per provider — counted from the snapshots themselves, no extra
