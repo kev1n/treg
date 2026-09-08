@@ -556,6 +556,13 @@ def _marketplace_pricing(
     estimate = _platform_estimate_micro(cost, query, body)
     unit = (_usd_to_micro(cost["usd"])
             if cost.get("type") in ("per_result", "quota_rows") and cost.get("usd") else 0)
+    if provider == "tomba" and endpoint_id == "tomba.companies.emails.list":
+        # Tomba bills requested page slots in blocks of ten, with a ten-slot default.
+        # A partial non-empty page still costs the full block; settlement frees empty pages.
+        raw = query.get("limit")
+        size = int(str(raw)) if raw is not None and str(raw).isdigit() else 10
+        credit = _usd_to_micro(float(cost.get("usd") or 0))
+        return max(1, (size + 9) // 10) * credit, credit
     if provider == "crustdata" and endpoint_id in (
         "crustdata.companies.enrich", "crustdata.people.enrich"
     ):

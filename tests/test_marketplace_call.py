@@ -1860,28 +1860,32 @@ async def test_concurrent_settles_never_lose_a_block_draw(clients: AsyncClient):
     assert drawn == 8 * with_margin(10_000)
 
 
-@pytest.mark.parametrize(('query', 'count'), [('', 0), ('&limit=20', 6)])
+@pytest.mark.parametrize(('query', 'count', 'page_size', 'credits'), [
+    ('', 0, 10, 0), ('', 10, 10, 1), ('&limit=1', 1, 1, 1),
+    ('&limit=10', 6, 10, 1), ('&limit=20', 6, 20, 2),
+    ('&limit=50', 50, 50, 5), ('&limit=20&page=1000', 0, 20, 0),
+])
 async def test_tomba_domain_search_settles_returned_emails(
-    clients: AsyncClient, platform_on, monkeypatch, query, count,
+    clients: AsyncClient, platform_on, monkeypatch, query, count, page_size, credits,
 ):
-    """An empty default page and a partially filled explicit page settle on delivered results."""
+    """Bill non-empty pages by page size; empty pages are free regardless of total matches."""
     monkeypatch.setenv('TREG_PLATFORM_KEY_TOMBA', 'SYNTHETIC-TOMBA-KEY')
     monkeypatch.setenv('TREG_PLATFORM_PROVIDERS', 'tomba')
     get_settings.cache_clear()
     body = json.dumps({'data': {
         'domain': 'company.example',
         'emails': [{'email': f'person{i}@company.example'} for i in range(count)],
-    }, 'meta': {'total': 100}}).encode()
+    }, 'meta': {'total': 100, 'pageSize': page_size}}).encode()
     monkeypatch.setattr(call_service, 'relay', _fake_relay(200, body))
     before = await _balance(clients)
     response = await clients.get(f'/call/tomba.companies.emails.list?domain=company.example{query}')
     assert response.status_code == 200
     assert response.content == body
-    assert await _balance(clients) == before - count * 8_900
+    assert await _balance(clients) == before - credits * 8_900
     telemetry = await _telemetry(clients)
-    assert telemetry['cost_estimated_micro'] == 178_000
-    assert telemetry['cost_observed_micro'] == count * 8_900
-    assert telemetry['cost_charged_micro'] == count * 8_900
+    assert telemetry['cost_estimated_micro'] == max(1, (page_size + 9) // 10) * 8_900
+    assert telemetry['cost_observed_micro'] == credits * 8_900
+    assert telemetry['cost_charged_micro'] == credits * 8_900
 
 
 @pytest.mark.parametrize('body', [
@@ -1896,3 +1900,11 @@ def test_tomba_domain_search_unknown_results_keep_estimate(body):
 def test_tomba_domain_search_count_does_not_apply_to_other_endpoints():
     mk = _mk('tomba', endpoint_id='tomba.people.email.verify', cost_type='per_call')
     assert call_settle._observed_cost_micro(mk, b'{"data": {"emails": []}}') is None
+
+
+@pytest.mark.parametrize('page_size', [None, 0, -1, True, "20", 1.5])
+def test_tomba_unknown_page_size_does_not_guess_from_email_count(page_size):
+    mk = _mk('tomba', endpoint_id='tomba.companies.emails.list', unit_micro=8_900)
+    body = json.dumps({'data': {'emails': [{'email': 'person@company.example'}]},
+                       'meta': {'pageSize': page_size}}).encode()
+    assert call_settle._observed_cost_micro(mk, body) is None
