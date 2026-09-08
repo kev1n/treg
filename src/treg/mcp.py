@@ -42,6 +42,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, TypedDict
 from urllib.parse import parse_qsl, urlsplit
+from uuid import uuid4
 
 import httpx
 from mcp.server import MCPServer
@@ -51,7 +52,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from mcp.shared.exceptions import MCPError
 from mcp.types import METHOD_NOT_FOUND, ToolAnnotations
 
-from . import audit
+from . import analytics, audit, mcp_feedback
 from .domain.catalog import store as catalog_store
 from .config import PUBLIC_HOST_ALIASES, get_settings
 from .feedback_contract import FeedbackCategory, FEEDBACK_DESCRIPTION
@@ -237,6 +238,7 @@ class CatalogGetOut(TypedDict, total=False):
 
 
 class CallOut(TypedDict, total=False):
+    call_id: str | None
     status: int | None              # the UPSTREAM status, relayed
     endpoint_id: str | None
     replayed: bool | None           # answered from an earlier call with the same idempotency_key
@@ -962,6 +964,8 @@ async def _call_impl(endpoint_id: str, params: dict | list | None = None,
         r = await client.request(method, f"{route}/{endpoint_id}", **kw)
 
     out: dict[str, Any] = {"status": r.status_code, "endpoint_id": endpoint_id, "body": _body(r)}
+    if call_id := r.headers.get("X-Treg-Call-Id"):
+        out["call_id"] = call_id
     if r.headers.get("X-Treg-Idempotent-Replay") == "true":
         out["replayed"] = True
         out["hint"] = ("this is the stored answer from the earlier call with the same "
@@ -976,6 +980,13 @@ async def _call_impl(endpoint_id: str, params: dict | list | None = None,
             out["cost_usd"] = round(int(spent) / 1_000_000, 6)
         except ValueError:
             pass
+    if 200 <= r.status_code < 300 and not out.get("hint") and not out.get("replayed"):
+        if mcp_feedback.sampled(out.get("call_id") or uuid4().hex):
+            out["hint"] = mcp_feedback.HINT
+            analytics.capture(analytics.SERVER_DISTINCT_ID, "mcp_feedback_hint_attached", {
+                "call_id": out.get("call_id"), "surface": surface.client_name,
+                f"$feature/{mcp_feedback.FLAG}": True,
+            })
     if r.status_code == 402:
         # States the fact and stops. No link, and `topup_url` is stripped from the relayed body, so
         # nothing on this path points a user at a payment page.
@@ -1567,8 +1578,9 @@ async def mcp_lifespan(target=None):
     inner = target
     while not hasattr(inner, "router"):      # unwrap NoTransformResponses / RequireAuthForProtectedTools
         inner = inner.app
-    async with inner.router.lifespan_context(inner):
-        yield
+    async with mcp_feedback.lifespan():
+        async with inner.router.lifespan_context(inner):
+            yield
 
 
 @asynccontextmanager
