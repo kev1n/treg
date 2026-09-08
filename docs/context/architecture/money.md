@@ -439,6 +439,7 @@ Provider-specific calculation stays outside the faithful relay.
 | Reported charge | DataForSEO `cost`, ScrapeCreators `credits_charged`, Akta `credits_consumed`, Lusha `billing.creditsCharged`, Exa `costDollars.total`; credit amounts use the catalog FX rate |
 | Crustdata | Read `X-Credits-Used` from response headers using the same FX rate |
 | Apollo | Known empty organization results are free |
+| Tomba domain search | One credit per email in `data.emails`; an empty list is free. Missing or malformed results fall back to the estimate; pagination totals do not determine the charge |
 | Hunter domain search | One whole search credit per ten returned emails, rounded up; an empty result is free |
 | Hunter email finder | One whole credit when an email is present; a known miss is free |
 | TikHub | Honor explicit no-charge prose; an embedded error that says it is charged still costs the estimate |

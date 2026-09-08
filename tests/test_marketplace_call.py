@@ -1858,3 +1858,41 @@ async def test_concurrent_settles_never_lose_a_block_draw(clients: AsyncClient):
     # 8 settles × margin(10,000µ$) each must ALL be drawn from the blocks — none lost.
     from treg.domain.money import with_margin
     assert drawn == 8 * with_margin(10_000)
+
+
+@pytest.mark.parametrize(('query', 'count'), [('', 0), ('&limit=20', 6)])
+async def test_tomba_domain_search_settles_returned_emails(
+    clients: AsyncClient, platform_on, monkeypatch, query, count,
+):
+    """An empty default page and a partially filled explicit page settle on delivered results."""
+    monkeypatch.setenv('TREG_PLATFORM_KEY_TOMBA', 'SYNTHETIC-TOMBA-KEY')
+    monkeypatch.setenv('TREG_PLATFORM_PROVIDERS', 'tomba')
+    get_settings.cache_clear()
+    body = json.dumps({'data': {
+        'domain': 'company.example',
+        'emails': [{'email': f'person{i}@company.example'} for i in range(count)],
+    }, 'meta': {'total': 100}}).encode()
+    monkeypatch.setattr(call_service, 'relay', _fake_relay(200, body))
+    before = await _balance(clients)
+    response = await clients.get(f'/call/tomba.companies.emails.list?domain=company.example{query}')
+    assert response.status_code == 200
+    assert response.content == body
+    assert await _balance(clients) == before - count * 8_900
+    telemetry = await _telemetry(clients)
+    assert telemetry['cost_estimated_micro'] == 178_000
+    assert telemetry['cost_observed_micro'] == count * 8_900
+    assert telemetry['cost_charged_micro'] == count * 8_900
+
+
+@pytest.mark.parametrize('body', [
+    b'{}', b'{"data": {}}', b'{"data": {"emails": null}}',
+    b'{"data": {"emails": {}}}', b'{"data": null}', b'not json',
+])
+def test_tomba_domain_search_unknown_results_keep_estimate(body):
+    mk = _mk('tomba', endpoint_id='tomba.companies.emails.list', cost_type='per_result')
+    assert call_settle._observed_cost_micro(mk, body) is None
+
+
+def test_tomba_domain_search_count_does_not_apply_to_other_endpoints():
+    mk = _mk('tomba', endpoint_id='tomba.people.email.verify', cost_type='per_call')
+    assert call_settle._observed_cost_micro(mk, b'{"data": {"emails": []}}') is None

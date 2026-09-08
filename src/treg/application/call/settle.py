@@ -253,6 +253,19 @@ def _observed_cost_micro(mk: MarketplaceCall, body: bytes, headers=None) -> int 
                 and isinstance(credits, (int, float)) and not isinstance(credits, bool) and credits >= 0):
             return int(credits * rate * 1_000_000 + 0.5)
         return None
+    if provider == "tomba" and mk.endpoint_id == "tomba.companies.emails.list":
+        # Domain search bills one credit per returned email, not per requested page slot.
+        # https://docs.tomba.io/faqs and the catalog rate card agree on this unit.
+        # Missing/malformed results are unknown; an explicit empty list is free.
+        data = doc.get("data")
+        emails = data.get("emails") if isinstance(data, dict) else None
+        if isinstance(emails, list):
+            if not emails:
+                return 0
+            rate = catalog_store.load().credit_rates.get("tomba")
+            if rate:
+                return int(len(emails) * rate * 1_000_000 + 0.5)
+        return None
     if provider == "hunter" and mk.endpoint_id == "hunter.companies.emails":
         # DERIVED, like apollo. Hunter's domain search does not bill per row at all: it takes ONE
         # whole search credit per 10 emails RETURNED, rounded up, and a domain it knows nobody at is
