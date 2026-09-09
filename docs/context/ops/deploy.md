@@ -29,6 +29,12 @@ the settings slot and a `sync: false` web-service key entry in `render.yaml`. Th
 sweep cron reads the same key through `fromService`. Operators supply the secret and enable
 the provider on deployment. Teams can connect their own keys without platform configuration.
 
+QuickEnrich uses `TREG_PLATFORM_KEY_QUICKENRICH` plus `quickenrich` in
+`TREG_PLATFORM_PROVIDERS`. The Render blueprint forwards the key to the capacity worker.
+Capacity uses the API-reported remaining credits; no separate plan setting is required.
+No auto-purchase or auto-top-up is configured. Supplying the key does not alter the serving
+allow-list. Local verification used the supplied root `.env`; no production secrets were changed.
+
 ## Entry point (`__main__.py`)
 `python -m treg upgrade` runs the explicit release phase. `maintenance._upgrade_schema()` runs
 `alembic upgrade head` for an empty or stamped database. A non-empty unstamped database is now refused
@@ -554,7 +560,8 @@ run alone does not enable routes.
 
 Aggregator keys
 (`TREG_OVERFLOW_KEY_ORTHOGONAL` / `_MONID`) are dashboard-managed on the web service and flow the same
-way. `TREG_OVERFLOW_MODE` (`off` default | `shadow` | `on`) and `TREG_OVERFLOW_DAILY_BUDGET_USD` (20)
+way. `TREG_OVERFLOW_MODE` (`off` default | `shadow` | `on`) and `TREG_OVERFLOW_DAILY_BUDGET_USD` (code
+default 20; production sets its own value in the private Blueprint)
 govern the overflow child cycle (`ops/capacity.md`); the keys serve nothing while the mode is `off`.
 
 `treg-worker asynctasks settle` is the second cron command. `treg-asynctasks-settle` runs every two

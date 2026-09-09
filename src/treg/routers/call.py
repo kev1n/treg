@@ -12,7 +12,7 @@ from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from starlette.background import BackgroundTask
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .. import analytics
+from .. import analytics, hints
 from .. import audit
 from .. import sandbox as demo_sandbox
 from ..application.call.access import catalog_endpoint_access as get_catalog_endpoint_access
@@ -309,7 +309,18 @@ async def call_tool(
     try:
         upstream = await execute_call(context, request.app.state.http)
         _attach_async_descriptor(upstream, context, rest)
-        return _http_upstream_response(upstream)
+        response = _http_upstream_response(upstream)
+        try:
+            # Phase 1 invites only direct catalog calls served on treg's platform key.
+            if (context.marketplace is not None and context.marketplace.tier == "platform"
+                    and 200 <= response.status_code < 300
+                    and not response.headers.get("X-Treg-Idempotent-Replay")
+                    and not context.cached
+                    and hints.sampled("review", context.call_ref)):
+                response.headers["X-Treg-Review"] = "requested"
+        except Exception:
+            pass  # Optional invitation: a fault can only lose the header.
+        return response
     except CallFailure as exc:
         raise _translate_call_failure(exc) from exc
     except PoolTimeoutError:

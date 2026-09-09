@@ -136,3 +136,5 @@ otherwise change route inspection and the committed surface snapshot.
 
 Public routes added since: `/{INDEXNOW_KEY}.txt` (`indexnow_key`, `routers/web.py`) — the IndexNow
 key file; listed in the ownership table beside `/sitemap.xml`. See `interface/seo.md` § IndexNow.
+
+`POST /reviews` and `GET /admin/reviews` belong to control, alongside feedback intake and reads.

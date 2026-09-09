@@ -17,6 +17,7 @@ from ...models import (
     CreditBlock,
     DenyRule,
     Feedback,
+    CallReview,
     Hold,
     IdempotentCall,
     Invite,
@@ -138,6 +139,7 @@ ORG_SCOPED_MODELS = (
     IdempotentCall,            # a remembered answer belongs to the team that paid for it
     ToolRequest,  # attribution rows go with the team; anonymous filings carry no org_id and stay
     Feedback,
+    CallReview,
     AdConversion,  # pending Google Ads conversions belong to the team they'd be attributed to
     Membership,   # last: it is what makes the caller a member of the org being deleted
 )

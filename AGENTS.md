@@ -16,9 +16,10 @@ Everything else in this file is guidance; these are the contract, and they win o
    every path: timeout, cancellation and exceptions included.
 3. Zero database connections are held while an upstream request is in flight. This is why
    `reserve` and `settle` are two transactions; never merge them.
-4. Plain `/call/` is a faithful relay: the injected credential and the transport headers listed in
-   `src/treg/infra/upstream/relay.py` are the only rewrites. Never add upstream-specific modeling
-   or body buffering. Routed endpoints and overflow wrap the child's answer and say so; they never
+4. Plain `/call/` is a faithful relay: the injected credential, the transport headers listed in
+   `src/treg/infra/upstream/relay.py`, and (on treg's shared key only) the per-org re-scoping of the
+   caller's `Idempotency-Key` are the only rewrites. Never add upstream-specific modeling or body
+   buffering. Routed endpoints and overflow wrap the child's answer and say so; they never
    alter it.
 5. Balances change only through money's five entries: grant, topup, reserve, settle, release.
    There is deliberately no refund or adjustment entry; an ops correction is a grant.
@@ -42,6 +43,8 @@ agents then built against a constitution that was wrong.
   source) and its hand-kept prose mirrors `src/treg/web/tutorial.md` and `docs/TUTORIAL.md`.
 - `README.md` is the overview and quickstart, `USAGE.md` the CLI reference, `CONTRIBUTING.md` the
   dev setup, `SECURITY.md` required reading before touching the proxy, runners, auth or secrets.
+- If available, `../treg-internal` holds private operational configuration and tools; read its
+  `README.md` before changing production settings. Public development does not depend on it.
 
 ## Architecture
 

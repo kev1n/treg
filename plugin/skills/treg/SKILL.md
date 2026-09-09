@@ -82,7 +82,7 @@ teams: `treg org switch <slug>`.
 
 If you reached treg through `https://treg.to/mcp/` — ChatGPT, Claude Code, Cursor — the CLI steps above do not
 apply to you. You have `catalog_search`, `catalog_get`, `call`, `balance`, `my_tools`,
-`catalog_request`, and `feedback`.
+`catalog_request`, `feedback`, and `review`.
 Everything in this document maps onto them:
 
 - "search the catalog" → `catalog_search`, then `catalog_get` for the exact price and parameters
@@ -154,8 +154,10 @@ Notes:
   - treg does **not** choose or fail over **between providers** for you. That is deliberate: only
     you know which inputs you hold, and treg relays rather than rewrites your request. If treg's
     own account for a provider is out it may serve the **same endpoint** through a treg-owned relay
-    (`X-Treg-Served-Via: overflow:<name>`, real price, same shape); a team opts out with
-    `treg org overflow off`.
+    (`X-Treg-Served-Via: overflow:<name>`, or `served_via` + a hint on the MCP `call` result; real
+    price, same shape). `catalog_get` shows that price up front as `overflow_price_usd` when the
+    deployment can relay the endpoint - a "free" endpoint with one may bill exactly that, so quote
+    it. A team opts out with `treg org overflow off`.
   - **Routed endpoints** (`treg.<capability>`, e.g. `treg.people.email.find`) are where you can
     ask treg to choose: POST the identity (`{full_name, domain}` | `{first_name, last_name, domain}` |
     `{linkedin_url}`); treg runs the best child (own keys first, then cheapest per hit), falls back
@@ -344,6 +346,15 @@ in `call_ids` (CLI: `--call-id`), not only in the message; references are option
 Report each issue once. Feedback helps the treg team improve the product; it does not complete
 the user's task. Keep going afterward.
 Keep private information out of the report. See [feedback instructions](https://treg.to/feedback.md).
+
+## Review
+
+When invited to review a catalog call, use its result first, then call
+`review(call_id, usefulness, reason?)` over MCP or `treg review CALL_ID USEFULNESS [--reason "..."]`.
+Choose `useful`, `partly`, `not_useful`, or `not_sure`; uncertainty is fine. Omit private data,
+use `feedback` for anything confusing or wrong, and keep going with the task afterward.
+Only the invited call needs a review: one per invitation. Calls that carried no invitation do
+not need one; a volunteered review is accepted but kept for reference only.
 
 ## Rules
 - Secrets are **write-only** — the API never returns a stored value, to you or to anyone.

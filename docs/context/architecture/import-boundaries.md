@@ -33,7 +33,7 @@ sources:
   - src/treg/domain/connections/oauth_flow.py
   - src/treg/domain/connections/refresh.py
   - src/treg/domain/money/__init__.py
-  - src/treg/domain/feedback.py
+  - src/treg/domain/feedback/__init__.py
   - src/treg/domain/asynctasks/__init__.py
   - src/treg/domain/capacity/__init__.py
   - src/treg/infra/upstream/__init__.py
@@ -136,7 +136,9 @@ It reads config and writes only its own tables and ratestore keys, from worker-p
 (`treg-worker`, a separate console script so the light `treg` CLI never gains a DB import). The call
 application imports the capacity domain inward (`resolve` → `view`, `settle` → `signatures`/`marks`);
 the domain never imports back; `application.call.overflow` composes the capacity domain, the
-aggregator envelopes and the money primitives, and the aggregator adapters stay pure envelope code; `application.call.route` composes the pure
+aggregator envelopes and the money primitives, and the aggregator adapters stay pure envelope code;
+`routers.catalog` reads the capacity domain's `routes_view` for the overflow price disclosure (a read
+of the worker-owned table through the same in-process copy the call path uses, never a write); `application.call.route` composes the pure
 `domain.catalog.routing` package (contracts, adapters, ranking) with the call use case itself. The
 aggregator envelopes live under `treg.infra.upstream.aggregators` and inherit the upstream contract
 (no HTTP adapters, no routers); the capacity domain's `verify` module may import them because they are

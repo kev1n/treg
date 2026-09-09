@@ -288,6 +288,23 @@
   {
     "kind": "APIRoute",
     "methods": [
+      "POST"
+    ],
+    "name": "submit_review",
+    "path": "/reviews"
+  },
+  {
+    "kind": "APIRoute",
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "admin_reviews",
+    "path": "/admin/reviews"
+  },
+  {
+    "kind": "APIRoute",
+    "methods": [
       "GET",
       "HEAD"
     ],

@@ -149,7 +149,8 @@ later for the timers; it complements `/admin/reconcile/repeats`, which prices wh
 
 Hooked in `call_tool` immediately after `_buffer_response` — the one line where "metered platform
 call, body already in memory" is a fact, which IS eligibility gate 3. Metered 2xx only; the
-`X-Treg-Cache`-style serve headers do not exist yet. `archive.record()` is fire-and-forget with
+serve path already emits `X-Treg-Cache: hit`. The call context also carries `cached` from
+`served_hit`, so review invitations can exclude archive hits independently of response headers. `archive.record()` is fire-and-forget with
 audit's discipline: bounded pending set (512), failures swallowed but logged at **ERROR** (a lost
 recording has to clear `FaultCaptureHandler`'s threshold to be reportable at all; degradations that
 cost nothing, like a lookup falling back to a live call, stay at WARNING), `drain()` on
@@ -182,6 +183,53 @@ would have it stored — judge `cache` per provider with that in mind.
 fresh hits — phase 1+). Any unrecognized value degrades to `off`: a typo must disable, never
 enable. Rollback in production is a dashboard env edit, no deploy.
 
+## Conservative comparison and controlled serving (2026-09-08)
+
+`TREG_ARCHIVE_COMPARISON_MODE` defaults to `strict`: only identical raw-byte SHA-256 hashes
+count as stable. Every differing response counts as changed, including whitespace, JSON field
+order and timestamps. `legacy_noise` explicitly restores `_noise_only`; unknown values select
+strict. The legacy heuristic can misclassify recurring business-field changes as noise and is
+not recommended for serving. Strict mode does not load or decompress the previous carrier to
+compare differing hashes. Stored bodies and exact-byte dedup are unchanged.
+
+TTL learning and lookup retain the original behavior: stable observations grow the timer by
+1.5, changed observations halve it, and TTL_NEVER remains respected. The fixed capability timer
+is only the initial/fallback value. Switching comparison mode does not reset existing timers,
+volatile paths or cumulative counters; strict observations continue updating the existing state.
+There is no separate fixed-TTL mode or learning-version migration. Old stable/changed counters
+remain lifetime mixed-policy statistics, not a clean measurement of strict comparison.
+`/admin/archive` exposes that caveat plus comparison mode, adaptive TTL policy, endpoint
+allowlist and rollout percentage.
+
+Serving now requires all three: `TREG_ARCHIVE_MODE=serve`, an exact endpoint ID in comma-separated
+`TREG_ARCHIVE_SERVE_ENDPOINTS` (default empty), and admission by `TREG_ARCHIVE_SERVE_PERCENT`
+(default 0). `rollout_reason` hashes the team ID plus endpoint into stable 0-99 buckets; increasing
+the percentage preserves existing treatment teams. Out-of-range percentages disable serving.
+Empty caller cohort also fails closed. These gates run before opening a lookup DB session.
+Recording is independent, so unselected teams and endpoints continue live calls and observations.
+A cohort is an experiment assignment, not an authorization boundary or a cache-key fix.
+Only review endpoints whose request headers, account context and reuse rights fit the existing
+legacy key before allowlisting; key v2 is still future work.
+
+`TREG_ARCHIVE_REFRESH_DAILY_CAP` now defaults 0 so experiments do not accidentally trigger
+platform spend. Explicitly enabled refresh requires a nonempty serving allowlist and valid
+positive rollout percentage; its candidate query is restricted to allowlisted endpoints and
+uses the same effective TTL policy. Turn it off during initial measurement.
+
+The existing `tool_called` PostHog event carries `cache_outcome`, `cache_mode`,
+`cache_comparison_mode`, `cache_ttl_policy`, `cache_rollout_percent`, and, when attempted,
+`cache_lookup_ms`. Snapshot lookups additionally expose `cache_age_s` and `cache_window_s`.
+Outcomes distinguish hit, key_missing, stale, snapshot_unavailable, body_missing, ttl_disabled,
+policy_excluded, caller_bypass, endpoint_disabled, rollout_disabled, missing_cohort, control,
+lookup_error and not_attempted (or mode_disabled for direct disabled lookups).
+No request key, body, ignored field paths or headers are added to analytics. The existing
+bounded, lossy analytics sink is reused; no new per-hit DB row or extra network request is added.
+`cache_lookup_ms` includes gate/DB/decompression time, not just SQL; `duration_ms` on the parent
+event remains the end-to-end call timing. Early refusals before the capture funnel can lack
+cache fields; missing fields are not misses. Shadow still only records/learns: it does not
+produce hypothetical hit counts or fresh-answer comparisons.
+
+
 ## Eligibility — three gates, in order
 
 1. **Kind.** `kind: action` entries are never stored; only data reads pass.
@@ -211,8 +259,8 @@ and credentials could not anyway: injection happens after the key is taken.
 `ArchiveKey` — one logical question: `key_hash` (unique), `endpoint_id`, `provider`, effective
 `policy`, AIMD timer state (`ttl_s`, grow ×1.5 capped on stable refetch / shrink ×0.5 floored on
 change — the learner lands in PR 5), change statistics (`change_seen`/`stable_seen`/
-`last_changed_at`), learned `volatile_paths` (noisy JSON paths excluded from change detection,
-never from stored bytes), and demand (`heat`, `last_requested_at`). Platform-scoped, no `org_id`:
+`last_changed_at`), legacy `volatile_paths` (consulted only in explicit `legacy_noise` comparison mode,
+never removed from stored bytes), and demand (`heat`, `last_requested_at`). Platform-scoped, no `org_id`:
 one team's fetch may warm another team's hit, and own-key traffic never enters.
 
 `ArchiveSnapshot` — one version: unique `(key_id, version)`, verbatim `body` bytes, `content_hash`

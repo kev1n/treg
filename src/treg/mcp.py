@@ -52,10 +52,10 @@ from mcp.server.transport_security import TransportSecuritySettings
 from mcp.shared.exceptions import MCPError
 from mcp.types import METHOD_NOT_FOUND, ToolAnnotations
 
-from . import analytics, audit, mcp_feedback
+from . import analytics, audit, hints
 from .domain.catalog import store as catalog_store
 from .config import PUBLIC_HOST_ALIASES, get_settings
-from .feedback_contract import FeedbackCategory, FEEDBACK_DESCRIPTION
+from .feedback_contract import FeedbackCategory, FEEDBACK_DESCRIPTION, ReviewUsefulness, REVIEW_DESCRIPTION
 from .domain.catalog.stats import EndpointObservationReader
 
 # Every tool must declare what it can DO, and the review process checks these against real behaviour.
@@ -160,6 +160,9 @@ mcp = MCPServer(
         "your team's own tools. Flow: catalog_search (say what you want to DO, not a vendor name) → "
         "catalog_get (params) → call. Multiple providers for one job? catalog_get ranks them by "
         "measured success, speed and price — you pick."
+        " When a call result carries a review invitation, use the result first, then call "
+        "review(call_id, usefulness, reason?) and keep going with the task. Only the invited call "
+        "needs a review: one per invitation."
     ),
     middleware=[_StaticSurfaceCapabilities()],
 )
@@ -217,6 +220,12 @@ class RequestOut(TypedDict, total=False):
     detail: str | None
 
 
+class ReviewOut(TypedDict, total=False):
+    review_id: int | None
+    status: str | None
+    detail: Any
+
+
 class FeedbackOut(TypedDict, total=False):
     feedback_id: int | None
     status: str | None
@@ -233,6 +242,10 @@ class CatalogGetOut(TypedDict, total=False):
                                            # response is a list of records (brightdata datasets)
     hints: list[str] | None
     did_you_mean: list[str] | None         # real ids close to one that missed
+    overflow_price_usd: float | None       # what a call bills when treg's own account is out and the
+                                           # overflow relay serves it instead (absent = never relayed)
+    overflow_price_unit: str | None        # "call" | "result": what one unit of that price buys
+    overflow_via: str | None               # the relay aggregator that price belongs to
     error: str | None
     detail: str | None
 
@@ -244,6 +257,8 @@ class CallOut(TypedDict, total=False):
     replayed: bool | None           # answered from an earlier call with the same idempotency_key
     body: Any                       # the provider's response, verbatim
     cost_usd: float | None
+    served_via: str | None          # "overflow:<aggregator>" when a treg-owned relay account served
+                                    # the call at ITS price (X-Treg-Served-Via); absent on a direct call
     whose_error: str | None         # "treg" or "provider" — who to blame, and whether to retry
     hint: str | None
     did_you_mean: list[str] | None  # real ids close to one that missed
@@ -696,6 +711,32 @@ async def feedback(
     return await _feedback_impl(category, message, ctx, call_ids, endpoint_id, surface=_TEAM_SURFACE)
 
 
+@mcp.tool(
+    description=REVIEW_DESCRIPTION,
+    annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, open_world_hint=False,
+                                idempotent_hint=False),
+    structured_output=True,
+)
+async def review(
+    call_id: str, usefulness: ReviewUsefulness, ctx: Context, reason: str | None = None,
+) -> ReviewOut:
+    return await _review_impl(call_id, usefulness, ctx, reason, surface=_TEAM_SURFACE)
+
+
+async def _review_impl(
+    call_id: str, usefulness: ReviewUsefulness, ctx: Context, reason: str | None,
+    *, surface: _SurfacePolicy,
+) -> ReviewOut:
+    token = _bearer(ctx)
+    api_context = (_api(token) if surface is _TEAM_SURFACE
+                   else _api(token, client_name=surface.client_name))
+    async with api_context as client:
+        response = await client.post("/reviews", json={
+            "call_id": call_id, "usefulness": usefulness, "reason": reason,
+        })
+    return _body(response)
+
+
 async def _feedback_impl(
     category: FeedbackCategory, message: str, ctx: Context,
     call_ids: list[str] | None, endpoint_id: str | None, *, surface: _SurfacePolicy,
@@ -763,7 +804,16 @@ async def _catalog_get_impl(
                 "hints": [catalog_store.unknown_id_hint(endpoint_id, cat),
                           "or use catalog_search to find the right id"],
                 "did_you_mean": catalog_store.near_ids(endpoint_id, cat)}
-    return _body(r)
+    out = _body(r)
+    # Lifted onto the result so the schema advertises it: the direct price is not the only price
+    # a "free" endpoint can bill (found 2026-09-08 - apollo.people.search, catalog cost free, billed
+    # $0.002 through the overflow relay 8,810 times in a day and nothing on this surface said so).
+    ep = (out.get("endpoint") or {}) if isinstance(out, dict) else {}
+    if isinstance(ep, dict) and ep.get("overflow_price_usd") is not None:
+        out["overflow_price_usd"] = ep["overflow_price_usd"]
+        out["overflow_price_unit"] = ep.get("overflow_price_unit")
+        out["overflow_via"] = ep.get("overflow_via")
+    return out
 
 
 # --------------------------------------------------------------------------------------------
@@ -980,12 +1030,28 @@ async def _call_impl(endpoint_id: str, params: dict | list | None = None,
             out["cost_usd"] = round(int(spent) / 1_000_000, 6)
         except ValueError:
             pass
+    # The relay disclosure. `/call/` says it in a header; an MCP client never sees headers, so
+    # until this line an agent reading `cost_usd` on a "free" endpoint had no way to explain the
+    # charge to the human (the header exists precisely so the price can be attributed).
+    served_via = r.headers.get("X-Treg-Served-Via")
+    if served_via:
+        out["served_via"] = served_via
+        if served_via.startswith("overflow:") and not out.get("hint"):
+            provider = endpoint_id.split(".", 1)[0]
+            out["hint"] = (f"served through the overflow relay ({served_via.removeprefix('overflow:')}) "
+                           f"at its real price because treg's {provider} account is out; cost_usd is "
+                           f"what the relay billed, not the catalog's direct price")
     if 200 <= r.status_code < 300 and not out.get("hint") and not out.get("replayed"):
-        if mcp_feedback.sampled(out.get("call_id") or uuid4().hex):
-            out["hint"] = mcp_feedback.HINT
-            analytics.capture(analytics.SERVER_DISTINCT_ID, "mcp_feedback_hint_attached", {
-                "call_id": out.get("call_id"), "surface": surface.client_name,
-                f"$feature/{mcp_feedback.FLAG}": True,
+        kind = None
+        if r.headers.get("X-Treg-Review") == "requested" and out.get("call_id"):
+            out["hint"] = hints.review_hint(out["call_id"])
+            kind = "review"
+        elif hints.sampled("feedback", out.get("call_id") or uuid4().hex):
+            out["hint"] = hints.HINT
+            kind = "feedback"
+        if kind:
+            analytics.capture(analytics.SERVER_DISTINCT_ID, "mcp_hint_attached", {
+                "call_id": out.get("call_id"), "surface": surface.client_name, "kind": kind,
             })
     if r.status_code == 402:
         # States the fact and stops. No link, and `topup_url` is stripped from the relayed body, so
@@ -1000,7 +1066,8 @@ async def _call_impl(endpoint_id: str, params: dict | list | None = None,
         # Scoped to the MCP path deliberately. `/call/`'s 402 still carries `topup_url` for the CLI
         # and the dashboard, where no such policy applies and the shortcut is genuinely useful.
         out["body"] = _without_purchase_pointers(out.get("body"))
-        out["hint"] = "the team's prepaid balance is not enough for this call"
+        if not out.get("replayed"):
+            out["hint"] = "the team's prepaid balance is not enough for this call"
     elif r.status_code >= 400:
         # Whose fault it was matters to an agent deciding whether to retry elsewhere.
         out["whose_error"] = "treg" if r.headers.get("X-Treg-Error") else "provider"
@@ -1115,6 +1182,9 @@ directory_mcp = MCPServer(
         "This connector exposes Treg catalog endpoints only. catalog_search finds endpoint ids; "
         "catalog_get returns parameters, provider documentation, price and reliability; "
         "catalog_call_read and catalog_call_write execute the selected endpoint."
+        " When a call result carries a review invitation, use the result first, then call "
+        "review(call_id, usefulness, reason?) and keep going with the task. Only the invited call "
+        "needs a review: one per invitation."
     ),
     middleware=[_StaticSurfaceCapabilities()],
 )
@@ -1250,6 +1320,17 @@ async def directory_feedback(
     return await _feedback_impl(
         category, message, ctx, call_ids, endpoint_id, surface=_DIRECTORY_SURFACE,
     )
+
+
+@directory_mcp.tool(
+    name="review", title="Review a Catalog Call", description=REVIEW_DESCRIPTION,
+    annotations=_DIRECTORY_ADDITIVE.model_copy(update={"title": "Review a Catalog Call"}),
+    structured_output=True,
+)
+async def directory_review(
+    call_id: str, usefulness: ReviewUsefulness, ctx: Context, reason: str | None = None,
+) -> ReviewOut:
+    return await _review_impl(call_id, usefulness, ctx, reason, surface=_DIRECTORY_SURFACE)
 
 
 # --------------------------------------------------------------------------------------------
@@ -1578,9 +1659,8 @@ async def mcp_lifespan(target=None):
     inner = target
     while not hasattr(inner, "router"):      # unwrap NoTransformResponses / RequireAuthForProtectedTools
         inner = inner.app
-    async with mcp_feedback.lifespan():
-        async with inner.router.lifespan_context(inner):
-            yield
+    async with inner.router.lifespan_context(inner):
+        yield
 
 
 @asynccontextmanager

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from urllib.parse import urlsplit
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -45,6 +45,9 @@ def _blocked_email_domains(raw: str) -> frozenset[str]:
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_prefix="TREG_", extra="ignore")
+
+    review_sample_rate: float = Field(default=0, ge=0, le=1)
+    feedback_hint_rate: float = Field(default=0, ge=0, le=1)
 
     # SQLite locally, Postgres on Render — same code path, just swap the URL.
     database_url: str = "sqlite+aiosqlite:///./treg.db"
@@ -170,6 +173,7 @@ class Settings(BaseSettings):
     platform_key_contactout: str = ""  # raw API token; injected into the token header
     platform_key_millionverifier: str = ""  # raw key; injected as ?api=…
     platform_key_hunter: str = ""
+    platform_key_quickenrich: str = ""  # Bearer; monthly subscription credits, not auto-top-up
     platform_key_leadmagic: str = ""
     platform_key_lusha: str = ""
     platform_key_pdl: str = ""
@@ -297,6 +301,13 @@ class Settings(BaseSettings):
     # fresh hits from the store). Any other value degrades to "off" — a typo must disable, never
     # enable. Staged deliberately so production can sit in "shadow" while phase 0 measures.
     archive_mode: str = "off"
+    # Strict compares raw bytes. The old heuristic is an explicit diagnostic opt-in only;
+    # unknown values also select strict. It never changes stored response bytes.
+    archive_comparison_mode: str = "strict"  # strict | legacy_noise
+    # Exact endpoint IDs, comma-separated. Empty means no serving, even in serve mode.
+    archive_serve_endpoints: str = ""
+    # Stable team/endpoint cohorts; 0 disables serving, 100 includes every team.
+    archive_serve_percent: int = 0
     # Bodies above this size are hash-counted but never stored (skipped whole, not truncated):
     # the archive is for API JSON answers, not downloads. Statistics still record size_bytes.
     archive_max_body_bytes: int = 2_000_000
@@ -309,7 +320,7 @@ class Settings(BaseSettings):
     # refresh calls ONE provider may spend per UTC day. A refresh is treg's own vendor spend with
     # no caller attached, so the cap is the brake — 0 disables refreshing without touching serving.
     archive_refresh_interval_s: int = 300
-    archive_refresh_daily_cap: int = 50
+    archive_refresh_daily_cap: int = 0
     # The pruner (profit-shaped: a stored body is inventory, and inventory that cannot sell goes
     # first). Runs whenever the archive records (shadow or serve); 0 batch disables it.
     archive_prune_interval_s: int = 3600       # one pass per hour

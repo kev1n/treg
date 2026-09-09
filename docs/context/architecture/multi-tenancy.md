@@ -213,7 +213,7 @@ bearer path refuses it once expired rather than reviving an expired cookie.
   org exists. **`create_org` uses `require_identity`, NOT `require_member`** — else a zero-org user could
   never make their first team. See [api](../interface/api.md).
 - **Code-free invites:** `my_invites` (`GET /invites/mine`, `require_identity`) lists pending invites for
-  the caller's proven email; `accept_my_invite` (`POST /invites/{id}/accept`, `require_identity`) joins
+  the caller's proven email, newest creation time first with descending ID breaking timestamp ties; `accept_my_invite` (`POST /invites/{id}/accept`, `require_identity`) joins
   with no code (403 if `invite.email != user.email`, 409 if already a member). The code path stays.
 - **Org management endpoints:** `register_user` (`POST /users`, legacy open-registration, used by the
   test fixture) still creates the user + an org + owner membership via `_make_org_membership` (mints the

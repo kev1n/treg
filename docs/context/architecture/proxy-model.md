@@ -49,6 +49,13 @@ Named catalog calls with authorization metadata select the provider and grant me
 comparing hosts. This separates Facebook and Instagram tools sharing `graph.facebook.com`;
 the resulting tool enters the same relay without provider-specific relay logic.
 
+Cache experiment metadata is attached to the existing `tool_called` event by the call-service
+capture funnel: outcome/reason, comparison and TTL policy, rollout percentage, lookup duration,
+and candidate age/window. It contains no response/request content or cache key. The stable
+team/endpoint rollout runs before archive DB lookup; unselected calls retain the normal relay
+and money path. See [archive](archive.md#conservative-comparison-and-controlled-serving-2026-09-08)
+for controls and metric denominators. This does not remove authorization/reserve/settle DB work.
+
 ## The faithful-relay contract
 `relay()` alters **only three things**; everything else is verbatim (method, path, all query params
 incl. duplicates, headers, cookies, body bytes):
@@ -77,6 +84,13 @@ incl. duplicates, headers, cookies, body bytes):
 Faithfulness mechanics inside `relay()`:
 - request headers rebuilt from `UpstreamRequest.raw_headers` into an `httpx.Headers` multidict (preserves
   duplicate headers / cookies); injection (`headers[name] = v`) overwrites only the named one.
+- on the platform tier only, `service` first passes the raw headers through
+  `relay.scope_shared_idempotency_key`, which replaces the caller's `Idempotency-Key` with a digest of
+  (org, label). Every org shares one provider account on treg's key, and a provider that honors the
+  header (LeadsForge does) would otherwise return org A's job to org B under the same label — and
+  `resource_ownership.produces` would then record A's job id as B's. Treg's own idempotency table
+  already replays a caller's answer for the same label, so the caller loses nothing. A team's own key
+  relays the header verbatim: that account is theirs.
 - query as the router-captured ordered pairs in `UpstreamRequest.query_items` (keeps duplicate keys
   like `?tag=a&tag=b`).
 - path rebuilt from `request.scope["raw_path"]` (in `call_tool`), not Starlette's URL-decoded path
@@ -362,7 +376,8 @@ maybe_overflow` runs a **child cycle** after the primary's settle released its h
 
 1. Route from the in-process route view (`domain.capacity.routes_view`, Orthogonal first), skipping
    an aggregator marked unhealthy (`overflow:<name>` in the capacity view) or without a key; budget
-   check against `OverflowSpend` (`overflow_daily_budget_usd`, $20/aggregator/day) on a short session.
+   check against `OverflowSpend` (`overflow_daily_budget_usd` per aggregator per day; $20 in code,
+   production's value lives in the private Blueprint) on a short session.
 2. **Child hold**, own id `{call_ref}:overflow`, through the ordinary `_platform_reserve` (tag
    budgets, daily cap, trial allowance apply; an empty balance is the normal 402). Never the parent's
    id: release-by-id is a conditional claim and `_finish_cancelled_call` releases both ids exactly once.
@@ -375,7 +390,10 @@ maybe_overflow` runs a **child cycle** after the primary's settle released its h
    the one allowlisted overflow write (`overflow_spend_in_settle`).
 5. The vendor's body goes back as the answer, `X-Treg-Served-Via: overflow:<name>`, `X-Treg-Cost-Micro`
    the child's charge, `X-Treg-Call-Id` the parent's. Two audit rows share the `call_ref`: the primary
-   attempt with its real status and the child with `credential_tier="platform-overflow"`.
+   attempt with its real status and the child with `credential_tier="platform-overflow"`. The MCP
+   `call` result carries the same disclosure as `served_via` plus a hint (an MCP client never sees
+   headers), and `/catalog/endpoints/{id}` / `catalog_get` show the route's price up front as
+   `overflow_price_usd` - see `architecture/money.md` § Overflow money.
 
 When the resolver already knows the account is out (the exhausted view) **and** a route is on, the
 ladder skips the direct attempt entirely (`MarketplaceCall.skip_direct`): no parent hold, no vendor
@@ -394,8 +412,13 @@ hold and marks `overflow:<name>` unhealthy for everyone; a relayed vendor answer
 reads as that vendor's own out-of-credit or quota dialect (`VENDOR_DRY`: a 402, Apollo's 422 through
 Orthogonal's dry Apollo account, a period 429) releases the child hold and marks
 `overflow:<name>:<provider>` only - one vendor's cap never takes the others offline. Either mark
-lasts 15 minutes, and the caller gets the typed `provider_capacity` 503 with alternatives; a second aggregator is never tried on the same call. Its
-stricter-schema refusal (`contract`) releases the child and lets the vendor's own answer stand.
+lasts 15 minutes, and the caller gets the typed `provider_capacity` 503 with alternatives; a second aggregator is never tried on the same call.
+The aggregator's own per-request refusal (`contract`: its stricter schema, or Orthogonal's bare
+400/422/404 with no vendor data) is request-scoped - it releases the child, charges nothing and marks
+nothing; the vendor's own answer stands, and on the skip-direct ladder, where there is none, the caller
+gets the typed 503 naming the refusal rather than the aggregator's envelope dressed as the vendor's
+answer. `malformed` is reserved for what is not an envelope at all (non-JSON, a 5xx, a transport
+error); one validation 400 read as `malformed` once took Orthogonal offline for every org for 15 minutes.
 
 **Shadow mode** (`TREG_OVERFLOW_MODE=shadow`): the aggregator is called, status / shape / cost logged
 and the probe's cost recorded in `OverflowSpend` (treg pays, budget-bounded) - the caller still gets

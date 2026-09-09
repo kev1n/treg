@@ -138,6 +138,12 @@ verified for that), the caller paid the aggregator's real price (`X-Treg-Cost-Mi
 `X-Treg-Call-Id` is the parent call's. Absent on every direct call. Off by default
 (`TREG_OVERFLOW_MODE`). See `architecture/proxy-model.md` § Overflow.
 
+The same fact reaches surfaces that cannot read headers: the MCP `call` result (team and directory
+servers alike) carries `served_via: "overflow:<aggregator>"` and a one-line `hint` naming the relay
+and the exhausted provider, and `GET /catalog/endpoints/{id}` / `catalog_get` carry
+`overflow_price_usd`, `overflow_price_unit` and `overflow_via` on a platform-eligible endpoint the
+deployment can relay - the price a "free" endpoint may actually bill, stated before the call.
+
 ## `X-Treg-Smoothed` - the call waited for treg's own rate limit
 
 On platform calls, including owned free polling: `wait=<ms>` when the call was spaced behind other callers on the
@@ -345,7 +351,7 @@ validated before resolving the shared HTTP client. `/auth/logout` remains an HTT
   | `GET /catalog/platforms` | Non-empty platforms with capability/endpoint counts and providers, ordered by endpoint count |
   | `GET /catalog/platforms/{slug}` | Capabilities, extended endpoints, dashboard domain rows and provider metadata; unknown slug is 404 |
   | `GET /catalog/search?q=&limit=` | Ranked endpoint views, count/total and hints; default 25, maximum 100 |
-  | `GET /catalog/endpoints/{id}` | Endpoint, provider, capability siblings, call template, inline example and next-step hints |
+  | `GET /catalog/endpoints/{id}` | Endpoint, provider, capability siblings, call template, inline example and next-step hints; `overflow_price_usd` / `overflow_price_unit` / `overflow_via` on the endpoint when the deployment can relay it |
   | `GET /catalog/examples/{id}` | Captured JSON, resolved through the catalog before constructing a file path |
   | `POST /tool-requests` | Open, rate-limited demand report with capped fields and optional caller attribution |
 

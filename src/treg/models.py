@@ -1146,6 +1146,25 @@ class Feedback(SQLModel, table=True):
     created_at: datetime = Field(default_factory=_now)
 
 
+class CallReview(SQLModel, table=True):
+    """One private usefulness rating per catalog call, attributed by the server."""
+
+    __table_args__ = (Index("ix_callreview_endpoint_id_created_at", "endpoint_id", "created_at"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    org_id: int = Field(foreign_key="org.id", index=True)
+    user_email: str
+    call_id: str = Field(unique=True, index=True)
+    endpoint_id: str = Field(index=True)
+    provider: str | None = Field(default=None)
+    routed_via: str | None = Field(default=None)
+    invited: bool = Field(default=False)
+    client: str = Field(default="")
+    usefulness: str
+    reason: str | None = Field(default=None)
+    created_at: datetime = Field(default_factory=_now)
+
+
 class ToolRequest(SQLModel, table=True):
     """A "the catalog doesn't have X" report — filed from the catalog page, the CLI, or by an
     agent mid-search over MCP. Demand signal for which provider to key next; reviewed by querying

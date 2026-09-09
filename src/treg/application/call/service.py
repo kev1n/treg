@@ -23,7 +23,7 @@ from ...sandbox_identity import visitor_name
 from ...domain.capacity import signatures as capacity_signatures
 from ...domain.capacity.view import view as capacity_view
 from ...infra.upstream.limiter import limiter as provider_limiter
-from ...infra.upstream.relay import relay
+from ...infra.upstream.relay import relay, scope_shared_idempotency_key
 from .. import asynctasks as async_task_app
 from ...domain import asynctasks as asynctasks_rules
 from .authorize import authorize_call, enforce_public_demo_limit
@@ -577,8 +577,14 @@ async def _execute_call(request: _ApplicationRequest, upstream_client: httpx.Asy
     audit_org_id, audit_email, audit_tool = caller.org_id, caller.email, tool.name
     audit_slug = caller.org.slug  # PostHog group key — must match the browser's posthog.group('team', slug)
 
+    cache_diagnostics: dict = {"cache_outcome": "not_attempted", "cache_mode": archive.mode(),
+                               "cache_comparison_mode": archive.comparison_mode(),
+                               "cache_ttl_policy": "adaptive",
+                               "cache_rollout_percent": get_settings().archive_serve_percent}
+
     def _capture(props: dict) -> None:
-        analytics.capture(audit_email, "tool_called", props, groups={"team": audit_slug})
+        analytics.capture(audit_email, "tool_called", props | cache_diagnostics,
+                          groups={"team": audit_slug})
 
     def _overflow_event(props: dict, outcome, charged: int) -> dict:
         """What a caller rescued by overflow actually experienced: the child's answer at the
@@ -845,14 +851,20 @@ async def _execute_call(request: _ApplicationRequest, upstream_client: httpx.Asy
         # is `expire_on_commit=False`, so `tool`/`secrets`/`caller.org` stay usable without a reload.
         await db.commit()
         try:
+            platform_tier = mk is not None and mk.tier == "platform"
+            raw_headers = tuple(request.headers.raw)
+            if platform_tier:
+                # Rewrite 4 of the relay's faithfulness contract: every org shares ONE provider
+                # account here, so a caller's Idempotency-Key must be partitioned by org before it
+                # reaches a provider that honors it (relay.py explains the leak it closes).
+                raw_headers = scope_shared_idempotency_key(raw_headers, caller.org_id)
             upstream_request = UpstreamRequest(
                 method=request.method,
-                raw_headers=tuple(request.headers.raw),
+                raw_headers=raw_headers,
                 query_items=tuple(request.query_params.multi_items()),
                 body_stream=request.stream,
                 has_body=request.has_body,
             )
-            platform_tier = mk is not None and mk.tier == "platform"
             if platform_tier:
                 # Burst smoothing, half one (plan §4.4): many callers share treg's key, so a call that
                 # would exceed the provider's published rate waits briefly (≤ 2 s, in-process, no DB —
@@ -870,19 +882,26 @@ async def _execute_call(request: _ApplicationRequest, upstream_client: httpx.Asy
             served = None
             # A probe must reach the vendor: an archived answer proves nothing about capacity.
             if mk is not None and mk.metered and mk.probe_lock_id is None and archive.serving():
+                lookup_started = time.monotonic()
                 try:
                     served = await archive.lookup(
                         method=request.method, endpoint_id=mk.endpoint_id,
                         url=archive.key_url(upstream_url,
                                             list(request.query_params.multi_items()),
                                             drop_params or set()),
-                        caller_body=caller_body, request_headers=request.headers)
+                        caller_body=caller_body, request_headers=request.headers,
+                        cohort=str(audit_org_id), diagnostics=cache_diagnostics)
                 except Exception:  # noqa: BLE001 — lookup swallows internally; this catches even a
                     served = None  # fault in its own plumbing. Cache trouble must cost a vendor
                     #              call, never a 500.
+                    cache_diagnostics["cache_outcome"] = "lookup_error"
+                finally:
+                    cache_diagnostics["cache_lookup_ms"] = round(
+                        (time.monotonic() - lookup_started) * 1000, 3)
             if served is not None:
                 body = served["body"]
                 served_hit = True
+                request.context.cached = served_hit
                 archive_key_hash, archive_content_hash = served["key_hash"], served["content_hash"]
                 response = _served_response(served, body)
             else:

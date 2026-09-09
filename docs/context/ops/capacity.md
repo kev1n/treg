@@ -60,6 +60,24 @@ endpoint using query auth `api`. Both the balance script and sweep use this coll
 not add `bulk_credits` to the balance. No overflow route is claimed. Verify the funded
 account's empty-credit response before adding a signature or enabling overflow.
 
+## QuickEnrich subscriptions
+
+`collectors._quickenrich` reads `meta.remaining_credits` from a free Contact Finder miss;
+there is no account/balance endpoint to list. Default policy is `monthly_quota` / `quota_reset`,
+with auto-funding disabled. The API does not report the renewal timestamp, so no calendar reset
+is guessed. Subsequent sweeps discover replenished credits. Do not model this as prepaid packs
+or auto-top-up. Hunter also uses renewal quotas: monthly plans reset monthly, yearly plans
+annually ([Hunter reset rules](https://help.hunter.io/en/articles/1911597-when-do-credits-reset)).
+
+Free, Starter and Growth use the API-reported remaining allowance. No manual plan setting
+can override that value. A reported zero means exhausted; missing, negative or non-numeric
+balance data means unknown, not unlimited. The unlimited-plan API response has not been
+verified. Inspect its actual status and balance fields before adding common unlimited-plan
+support. Per-call billing remains separate: use `meta.credits_used` at the treg list rate.
+
+Exhaustion behavior is acknowledged as unrecorded in the existing shared signature guard;
+we did not exhaust the trial to manufacture evidence. No overflow route is claimed.
+
 ## Pieces (`src/treg/domain/capacity/`)
 
 - **`collectors.py`** — the providers' *free* balance/quota calls (`coroutine(client, key) →
@@ -188,7 +206,10 @@ pays the aggregator's real price, 0% markup, disclosed in-band when it ships (st
   endpoint, input}`), `parse()` unwraps the vendor status + body + the real in-band charge, and
   names who to blame when the aggregator itself refused (`AGGREGATOR_SIDE` = `aggregator_auth`,
   `aggregator_balance`, `malformed` - the call path marks the aggregator unhealthy for everyone, the
-  verifier leaves the route alone; `VENDOR_DRY`, folded in by `with_vendor_verdict` from the
+  verifier leaves the route alone; `contract` - the aggregator's own per-request refusal, including
+  Orthogonal's bare 400/422/404 with no vendor data - is request-scoped: child released, nothing
+  charged, no mark, `malformed` being reserved for non-JSON, 5xx and transport errors;
+  `VENDOR_DRY`, folded in by `with_vendor_verdict` from the
   signature table - the one place a relayed body is read - is the aggregator's account for THIS
   vendor (a relayed 402, Apollo's 422, a period 429): the call path marks
   `overflow:<aggregator>:<provider>` only, so one vendor's cap never takes the others offline.
@@ -261,7 +282,8 @@ the policy table. `rate_pressure` alerting is step C.
 ## Overflow, the child cycle (step E) — off by default
 
 `application/call/overflow.py` is documented in `architecture/proxy-model.md` § Overflow. Operating
-it: `TREG_OVERFLOW_MODE` = `off` (default) | `shadow` | `on`; `TREG_OVERFLOW_DAILY_BUDGET_USD` (20)
+it: `TREG_OVERFLOW_MODE` = `off` (default) | `shadow` | `on`; `TREG_OVERFLOW_DAILY_BUDGET_USD` (code
+default 20; production's value is set in treg-internal's Blueprint, $500 at the time of writing)
 per aggregator per UTC day is a hard admission cap backed by `OverflowSpend`. Before either an
 `on` call or a `shadow` probe goes to the network, a conditional atomic upsert reserves the route's
 estimated micro-USD only if the resulting daily total fits under the cap. Completion reconciles the

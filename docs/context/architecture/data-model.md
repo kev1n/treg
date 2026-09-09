@@ -290,6 +290,10 @@ uses this metadata, never the encrypted token's shape.
   treg's direct price. Written inside the overflow child's settle transaction (and by the shadow probe);
   the $20/day budget reads it. Alembic `0007`. Not a balance.
 
+`CallReview` (revision 0026) stores one private usefulness rating per unique call reference.
+It has endpoint/time and tenant indexes and is deleted with its team via `ORG_SCOPED_MODELS`.
+See [feedback](feedback.md) for attribution, submission, sampling and collection-only scope.
+
 ## Bindings (the multi-credential shape)
 `Tool.bindings` is a JSON list; each entry is
 `{secret_id, injector, location, name, format, secret_field}` - one credential injection. A request
