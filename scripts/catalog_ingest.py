@@ -1232,7 +1232,176 @@ def ingest_replicate(refresh: bool) -> tuple[Path, dict]:
     return out, {"models": len(endpoints)}
 
 
+
+# ---------------------------------------------------------------------------------------------
+# anyapi
+
+# AnyAPI's SKU prefix -> treg platform slug. Absent = the prefix is already a platform slug.
+# The left-hand side is the first dotted segment of an AnyAPI SKU id (`twitter.profile`).
+ANYAPI_PLATFORM = {
+    "twitter": "x",
+    "rednote": "xiaohongshu",
+    "appstore": "app-store",
+    "playstore": "google-play",
+    "maps": "google-business",
+    "tiktok_shop": "tiktok-shop",
+    "google_ads": "google-ads",
+    "google_shopping": "google",
+    "google_finance": "stocks",
+    "yahoo_finance": "stocks",
+    "coinmarketcap": "crypto",
+    "dexscreener": "crypto",
+    # SEO/backlink tooling describes the open web and Google's index, not a product surface.
+    "ahrefs": "web", "semrush": "web", "seo": "google", "web": "web",
+    # AI answer engines already have a shelf.
+    "chatgpt": "ai-search", "gemini": "ai-search", "perplexity": "ai-search",
+    # people/company enrichment shelves
+    "company": "companies", "person": "people", "social": "people",
+}
+
+# Excluded from the listing by AnyAPI. Kept as an explicit id list rather than a prefix rule
+# because the excluded set does not line up with SKU prefixes.
+ANYAPI_EXCLUDE_PREFIX = ("apollo.",)
+ANYAPI_EXCLUDE = frozenset({
+    "company_enrichment.lusha", "company_enrichment.crustdata_v3", "company_enrichment.prospeo",
+    "company_enrichment.peopledatalabs", "company_search.ai_ark", "company_search.crustdata_v3",
+    "company_search.quickenrich", "company_search.prospeo", "company_search.fullenrich",
+    "company_search.peopledatalabs", "company_search.theirstack", "email_finding.dropleads",
+    "email_finding.hunter_count", "email.verify", "email.find", "email_finding.icypeas",
+    "email_finding.zerobounce", "email_finding.quickenrich", "email_finding.hunter_domain",
+    "email_verification.allegrow", "email_verification.bounceban", "email_verification.icypeas",
+    "email_finding.zerobounce_domain", "email_verification.zerobounce_activity",
+    "email_verification.zerobounce", "job_search.theirstack", "mobile_phone.leadmagic",
+    "people_search.crustdata_v3", "people_search.ai_ark", "mobile_phone.ai_ark",
+    "people_search.fullenrich", "people_search.peopledatalabs", "people_search.quickenrich",
+    "people_search.lusha", "people_search.prospeo", "people_search.quickenrich_company",
+    "person_enrichment.fullenrich_bulk", "person_enrichment.aviato",
+    "person_enrichment.bettercontact", "person_enrichment.lusha",
+    "person_enrichment.fullenrich_reverse_email", "person_enrichment.prospeo",
+    "person_enrichment.peopledatalabs", "person_enrichment.quickenrich",
+    "technographics.theirstack",
+})
+
+# Routing controls, not data inputs: they change which source serves and what it costs, never the
+# shape of the answer. Carrying them into every one of 300+ entries would bury the real parameters.
+ANYAPI_SKIP_PARAMS = {"preferLatencyUnderMs", "requireCursor", "requireSinglePage", "cursor"}
+
+ANYAPI_RATE_CARD = "https://api.getanyapi.com/v1/apis?limit=1000"
+ANYAPI_OPENAPI = "https://api.getanyapi.com/openapi.json"
+
+
+def _anyapi_input(schema: dict, example: dict) -> dict:
+    """AnyAPI publishes one strict JSON Schema per SKU; carry it across verbatim minus the
+    routing controls, so a generated `test_request` is built from the vendor's own examples."""
+    required = set(schema.get("required") or [])
+    body = {}
+    for name, spec in (schema.get("properties") or {}).items():
+        if name in ANYAPI_SKIP_PARAMS or not isinstance(spec, dict):
+            continue
+        field = {"type": spec.get("type", "string"), "required": name in required}
+        note = clean(str(spec.get("description") or ""))
+        if note:
+            field["note"] = note[:300]
+        for src, dst in (("default", "default"), ("minimum", "min"), ("maximum", "max"),
+                         ("enum", "enum")):
+            if src in spec:
+                field[dst] = spec[src]
+        if name in example:
+            field["example"] = example[name]
+        body[name] = field
+    return {"body": body, "bodyType": "json"}
+
+
+def _anyapi_cost(api: dict, checked: str) -> dict:
+    """The cheapest source's customer price, read from AnyAPI's own rate card.
+
+    Two shapes come back. `flat` is one number per request. `linear` is a base plus a per-result
+    rider, and its `maxUsd` is the price at the input's maximum — recorded as a per-result rate so
+    the reserve is the row's own ceiling rather than a single-result price.
+
+    In BOTH cases `reported_charge` is what actually settles: every AnyAPI 2xx carries a top-level
+    `costUsd` with the exact charge for that call, which is the only number that knows which source
+    served and how many rows came back.
+    """
+    price = api["pricing"]["from"]
+    cost = {"type": "per_success"}
+    if price.get("model") == "linear" and price.get("perUnitUsd"):
+        cost.update(type="per_result", value=price["perUnitUsd"], unit="result")
+    else:
+        cost.update(value=price["maxUsd"], unit="call")
+    cost.update(
+        currency="USD",
+        reported_charge={"path": "costUsd", "unit": "usd"},
+        source="rate_card_api",
+        source_url=f"https://api.getanyapi.com/v1/apis/{api['id']}",
+        checked=checked,
+        confidence="verified",
+    )
+    return cost
+
+
+def ingest_anyapi(refresh: bool = False):
+    """Every AnyAPI SKU except the ones curated in core and the ones AnyAPI excludes.
+
+    Two sources, both the vendor's own: the OpenAPI document for request shapes (public, no key)
+    and the rate card for prices (needs any AnyAPI key in `ANYAPI_API_KEY` — `POST
+    https://api.getanyapi.com/agent/signup` mints a free one with no account).
+    """
+    key = os.environ.get("ANYAPI_API_KEY", "")
+    if not key:
+        raise SystemExit("anyapi: set ANYAPI_API_KEY (POST /agent/signup returns a free one)")
+    spec = json.loads(fetch(ANYAPI_OPENAPI, "anyapi_openapi.json", refresh=refresh))
+    catalog = json.loads(fetch(ANYAPI_RATE_CARD, "anyapi_rate_card.json", refresh=refresh,
+                               headers={"X-API-Key": key}))["apis"]
+    skip = core_routes("anyapi")
+    checked = str(date.today())
+    endpoints, unknown_platform = [], set()
+    for api in sorted(catalog, key=lambda a: a["id"]):
+        sku = api["id"]
+        if sku in ANYAPI_EXCLUDE or sku.startswith(ANYAPI_EXCLUDE_PREFIX):
+            continue
+        path = api["path"]
+        if (api["method"].upper(), path) in skip:
+            continue
+        op = ((spec.get("paths") or {}).get(path) or {}).get(api["method"].lower())
+        if not op:
+            continue
+        content = (op.get("requestBody") or {}).get("content", {}).get("application/json", {})
+        example = content.get("example") or {}
+        prefix = sku.split(".")[0]
+        platform = ANYAPI_PLATFORM.get(prefix, prefix)
+        ep = {
+            "id": f"anyapi.{sku}",
+            "tier": "extended",
+            "platform": platform,
+            "domain": sku.split(".", 1)[1].split("_")[0],
+            "method": api["method"].upper(),
+            "path": path,
+            "name": clean(api["name"])[:60],
+            "summary": clean(api["description"])[:400],
+            "input": _anyapi_input(content.get("schema") or {}, example),
+            "cost": _anyapi_cost(api, checked),
+            # One public page per SKU: live price, source routing and measured 30-day uptime.
+            "docs_url": ("https://getanyapi.com/api/"
+                         f"{prefix.replace('_', '-')}/{sku.split('.', 1)[1].replace('_', '-')}"),
+        }
+        # No `test_request` here: a freshly ingested entry has never been called, and the vendor's
+        # own example values already ride on each input field for the verify pass to build one from.
+        endpoints.append(ep)
+        unknown_platform.add(platform)
+    source = {"method": "openapi + provider rate card", "ingested": checked,
+              "spec_urls": [ANYAPI_OPENAPI, ANYAPI_RATE_CARD]}
+    out = write_extended("anyapi", source, endpoints, [
+        "Every SKU AnyAPI publishes, minus the routes curated in anyapi.yaml and the SKUs AnyAPI",
+        "excludes from this listing (ANYAPI_EXCLUDE in scripts/catalog_ingest.py).",
+        "Prices are the CHEAPEST source's customer price from the live rate card; every response",
+        "reports its exact charge as costUsd, which is what reported_charge settles on.",
+    ], carry_capability=True)
+    return out, {"endpoints": len(endpoints)}
+
+
 INGESTERS = {
+    "anyapi": ingest_anyapi,
     "tikhub": ingest_tikhub,
     "dataforseo": ingest_dataforseo,
     "justoneapi": ingest_justoneapi,
