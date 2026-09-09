@@ -1282,17 +1282,21 @@ ANYAPI_EXCLUDE = frozenset({
     "technographics.theirstack",
 })
 
-# Four SKUs whose price cannot be one scalar. Each pairs a flat single-page source with a BULK
-# source priced per row whose input maximum is ~97,000 rows (twitter) or ~1,000 (instagram), so the
-# catalogued price is $0.00075-$0.0015 and the same endpoint can legitimately charge $1.43-$16.50.
-# Both numbers are real; neither describes the row. Listing the cheap one would reserve $0.00075
-# against a possible $16.50 settlement, and listing the dear one would put $16.50 on a shelf next
-# to $0.001 rivals. They sit an order of magnitude above every other row on both measures - the
-# next-largest gap between catalogued price and ceiling is $0.225 - so this is a real break in the
-# data rather than a chosen cutoff. They stay out until treg can bind a per-call ceiling
-# (AnyAPI accepts `?max_cost_usd=`, which platform_request cannot set today).
-ANYAPI_EXCLUDE_UNBOUNDED = frozenset({
-    "twitter.followers", "twitter.following", "instagram.followers", "instagram.following",
+# Two SKUs held back because neither of their sources answers today (checked 2026-09-09):
+# socialcrawl returns HTTP 503 "instagram is temporarily unavailable" and scraper.tech returns
+# not-found on the canonical example. Listing them would put two endpoints that return nothing on
+# a public shelf and fail our own verify pass. This is about whether an answer comes back, not
+# about price: their $0.018 ceiling against a $0.0015 catalogued price is an ordinary spread and
+# is perfectly listable. Re-ingest them once either source serves the canonical example again.
+#
+# This set previously also held `twitter.followers` and `twitter.following` for a price reason:
+# each paired a flat single-page source with a bulk source priced per row whose input maximum made
+# the same endpoint legitimately charge up to $16.50, so no single scalar could describe the row.
+# AnyAPI deleted those bulk sources on 2026-09-09. Both now publish one source at $0.00075 with a
+# $0.00075 ceiling - price and ceiling are the same number - so the reserve can never fall short
+# and they are listed again.
+ANYAPI_EXCLUDE_DEAD = frozenset({
+    "instagram.followers", "instagram.following",
 })
 
 # Routing controls, not data inputs: they change which source serves and what it costs, never the
@@ -1302,7 +1306,7 @@ ANYAPI_SKIP_PARAMS = {"preferLatencyUnderMs", "requireCursor", "requireSinglePag
 ANYAPI_RATE_CARD = "https://api.getanyapi.com/v1/apis?limit=1000"
 ANYAPI_OPENAPI = "https://api.getanyapi.com/openapi.json"
 # Bumped by hand when the rate card is re-read, so a re-run with no price change is byte-identical.
-ANYAPI_CHECKED = "2026-09-08"
+ANYAPI_CHECKED = "2026-09-09"
 
 
 def _anyapi_input(schema: dict, example: dict) -> dict:
@@ -1367,7 +1371,7 @@ def ingest_anyapi(refresh: bool = False):
     endpoints, unknown_platform = [], set()
     for api in sorted(catalog, key=lambda a: a["id"]):
         sku = api["id"]
-        if (sku in ANYAPI_EXCLUDE or sku in ANYAPI_EXCLUDE_UNBOUNDED
+        if (sku in ANYAPI_EXCLUDE or sku in ANYAPI_EXCLUDE_DEAD
                 or sku.startswith(ANYAPI_EXCLUDE_PREFIX)):
             continue
         path = api["path"]
