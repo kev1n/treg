@@ -1,0 +1,919 @@
+# AnyAPI — CORE tier, hand-curated by the vendor (see the PR description's self-verification
+# ledger: every test_request below was run live on 2026-09-08 and its cost reconciled against the
+# charge AnyAPI's own meter reported).
+#
+# AnyAPI is a per-request USD gateway over 362 normalized endpoints. Two properties matter for
+# this catalog:
+#   1. PRICE. `cost.value` is the CHEAPEST source's customer price, read from AnyAPI's own live
+#      rate card (GET /v1/apis/<sku>), which is why `source: rate_card_api`. Every SKU also
+#      publishes `failoverMaxUsd`, the dearest source that may rescue a failed attempt; that
+#      ceiling is named per endpoint in `note`.
+#   2. SETTLEMENT. Every 2xx run body carries a top-level `costUsd` — the exact USD charged for
+#      that call. `cost.reported_charge` makes treg settle on that number instead of the estimate,
+#      so a rescued request bills what it really cost and a cheap request can bill LESS than the
+#      catalogued price.
+# A request that no source could serve returns a non-2xx and is not charged.
+provider: anyapi
+source:
+  docs: https://getanyapi.com/docs
+  openapi: https://api.getanyapi.com/openapi.json
+  rate_card: https://api.getanyapi.com/v1/apis
+  curated: '2026-09-08'
+limits: no published per-key request-rate limit on /v1/run - AnyAPI does not advertise a quota it does
+  not enforce. Spend is bounded instead by the wallet balance, the key's own spend cap, and the per-request
+  `max_cost_usd` ceiling the caller sets. The unauthenticated /agent/signup trial route is limited to
+  3 per IP per hour.
+pricing_url: https://getanyapi.com/catalog
+proposed_capabilities:
+  web.contents.get: Get a page's text, highlights or summary by URL
+endpoints:
+- id: anyapi.google.serp.organic
+  capability: google.serp.organic
+  platform: google
+  scope: any_account
+  kind: data
+  method: POST
+  path: /v1/run/google.search
+  name: Google Search
+  summary: Run a Google web search and get the organic results (title, link, snippet, position) as clean
+    JSON. Returns about 10 results per call - Google stopped honoring bulk result counts in September
+    2025, so a limit above 10 is accepted but returns no more than a page. Pass the returned nextCursor
+    back as cursor to walk further, or use google.search_100 for up to 100 ranked results in one call,
+    which is cheaper past roughly 20 results.
+  input:
+    body:
+      autocorrect:
+        type: boolean
+        required: false
+        note: Toggle Google spelling autocorrect (default true). Set false to search the exact query without
+          correction.
+      cursor:
+        type: string
+        required: false
+        note: Continuation token from a previous response's nextCursor. Pass it back to fetch the next
+          page of results.
+      gl:
+        type: string
+        required: false
+        note: Two-letter country code for result localization (e.g. us, gb, de).
+        default: us
+        example: us
+      hl:
+        type: string
+        required: false
+        note: Two-letter interface and results language code (e.g. en, es, de).
+        default: en
+        example: en
+      limit:
+        type: integer
+        required: false
+        note: Maximum number of organic results to return in this response. Google stopped honoring bulk
+          result counts in September 2025, so one page is about 10 results and a limit above 10 is accepted
+          but will not return more than that. To go deeper, either page through with cursor (about 10
+          results per...
+        default: 10
+        min: 1
+        max: 100
+        example: 1
+      location:
+        type: string
+        required: false
+        note: Fine-grained location for result localization, given as a canonical Google location string
+          (e.g. 'New York, United States', 'London, United Kingdom'). More specific than the country-level
+          gl.
+      query:
+        type: string
+        required: true
+        note: The Google search query.
+        example: best coffee maker
+      timeframe:
+        type: string
+        required: false
+        note: 'Restrict results to a recent time window: 1h, 1d, 7d, 1y, or all. Default all (no time
+          restriction).'
+    bodyType: json
+  test_request:
+    body:
+      query: best coffee maker
+      limit: 1
+  cost:
+    type: per_success
+    value: 0.0007
+    currency: USD
+    unit: call
+    reported_charge:
+      path: costUsd
+      unit: usd
+    source: rate_card_api
+    source_url: https://api.getanyapi.com/v1/apis/google.search
+    checked: '2026-09-08'
+    confidence: verified
+  docs_url: https://getanyapi.com/api/google/search
+  note: Flat per request whatever the result count. `google.search_100` returns up to 100 ranked results
+    for one flat charge and is cheaper past roughly 20 results. AnyAPI slug `google.search`. 2 sources
+    can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.0009
+    ceiling per request. Every response reports its exact charge as `costUsd`, so `reported_charge` settles
+    the real number rather than this estimate. A request no source could serve is not charged. Send the
+    `max_cost_usd` query parameter to refuse any source dearer than a price you name.
+- id: anyapi.google.serp.news
+  capability: google.serp.news
+  platform: google
+  scope: any_account
+  kind: data
+  method: POST
+  path: /v1/run/google.news
+  name: Google News
+  summary: Search Google News by keyword and get fresh articles (headlines, sources, links, and publish
+    times) as clean JSON.
+  input:
+    body:
+      gl:
+        type: string
+        required: false
+        note: Two-letter country code for result localization (e.g. us, gb, de).
+        default: us
+        example: us
+      hl:
+        type: string
+        required: false
+        note: Two-letter interface and results language code (e.g. en, es, de).
+        default: en
+        example: en
+      limit:
+        type: integer
+        required: false
+        note: Requested article count (1-20, default 20). Google News returns its latest matching articles
+          and may return more or fewer than requested. Price is flat per request.
+        min: 1
+        max: 20
+        example: 1
+      location:
+        type: string
+        required: false
+        note: Fine-grained location for result localization, given as a canonical Google location string
+          (e.g. 'New York, United States', 'London, United Kingdom'). More specific than the country-level
+          gl.
+      query:
+        type: string
+        required: true
+        note: News search query; supports operators like '-', 'OR', and 'site:' (e.g. bitcoin site:cnn.com).
+        example: openai
+      timeframe:
+        type: string
+        required: false
+        note: 'How far back to search, written as a count plus a unit: h hours, d days, w weeks, m months,
+          y years. So 2h is the last two hours, 30d the last thirty days, 6m the last six months. Omit
+          this field, or send ''all'', to search without a time limit.'
+    bodyType: json
+  test_request:
+    body:
+      query: openai
+      limit: 1
+  cost:
+    type: per_success
+    value: 0.00099
+    currency: USD
+    unit: call
+    reported_charge:
+      path: costUsd
+      unit: usd
+    source: rate_card_api
+    source_url: https://api.getanyapi.com/v1/apis/google.news
+    checked: '2026-09-08'
+    confidence: verified
+  docs_url: https://getanyapi.com/api/google/news
+  note: Single source, so the price has no failover ceiling above it. AnyAPI slug `google.news`. 1 source
+    can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.00099
+    ceiling per request. Every response reports its exact charge as `costUsd`, so `reported_charge` settles
+    the real number rather than this estimate. A request no source could serve is not charged. Send the
+    `max_cost_usd` query parameter to refuse any source dearer than a price you name.
+- id: anyapi.web.contents.get
+  capability: web.contents.get
+  platform: web
+  scope: any_account
+  kind: data
+  method: POST
+  path: /v1/run/web.scrape
+  name: Web Scrape
+  summary: Scrape any web page and get its content back as clean Markdown (or HTML, or raw HTML) plus
+    title and metadata.
+  input:
+    body:
+      blockAds:
+        type: boolean
+        required: false
+        note: When true (upstream default), strip ad and cookie-consent elements before capture. Set false
+          to keep them.
+      excludeTags:
+        type: array
+        required: false
+        note: CSS selectors to drop before capture (for example ["nav", "footer", ".ads"]). Applied after
+          includeTags.
+      formats:
+        type: array
+        required: false
+        note: 'Which representations of the page to return. Any combination of: markdown (page content
+          as Markdown), html (the page HTML exactly as the browser received it, including head and script
+          tags). Each requested format is returned under the matching output field. Defaults to both.
+          rawHtml is a...'
+        default:
+        - markdown
+        - html
+        example:
+        - markdown
+      includeTags:
+        type: array
+        required: false
+        note: CSS selectors to keep. When set, only content matching these selectors is captured (for
+          example ["article", "main"] or ["#content"]).
+      mobile:
+        type: boolean
+        required: false
+        note: When true, render the page with a mobile viewport and user agent instead of desktop. Some
+          sites serve materially different content to mobile.
+      onlyMainContent:
+        type: boolean
+        required: false
+        note: When true, return only the main article content, stripping navigation, headers, footers,
+          and other boilerplate. Defaults to false to capture the full page.
+        default: false
+        example: false
+      url:
+        type: string
+        required: true
+        note: The URL of the page to scrape.
+        example: https://example.com
+      waitFor:
+        type: integer
+        required: false
+        note: Milliseconds to wait for the page to finish rendering before capture. Use this for JavaScript-heavy
+          pages or single-page apps whose content loads after the initial paint. Capped at 15000 to stay
+          within the request timeout. This wait is time you asked us to spend, so your response takes
+          this much...
+        min: 0
+        max: 15000
+    bodyType: json
+  test_request:
+    body:
+      url: https://example.com
+      formats:
+      - markdown
+  cost:
+    type: per_success
+    value: 0.0007
+    currency: USD
+    unit: call
+    reported_charge:
+      path: costUsd
+      unit: usd
+    source: rate_card_api
+    source_url: https://api.getanyapi.com/v1/apis/web.scrape
+    checked: '2026-09-08'
+    confidence: verified
+  docs_url: https://getanyapi.com/api/web/scrape
+  note: Flat per request. Four sources; a blocked or empty fetch is retried on the next one, and the schema
+    does not change. AnyAPI slug `web.scrape`. 4 sources can serve it; the cheapest serves first and a
+    failed attempt is retried on the next, up to a $0.0015 ceiling per request. Every response reports
+    its exact charge as `costUsd`, so `reported_charge` settles the real number rather than this estimate.
+    A request no source could serve is not charged. Send the `max_cost_usd` query parameter to refuse
+    any source dearer than a price you name.
+- id: anyapi.google.serp.maps
+  capability: google.serp.maps
+  platform: google
+  scope: any_account
+  kind: data
+  method: POST
+  path: /v1/run/maps.search
+  name: Google Maps Search
+  summary: 'Search Google Maps for places matching a query and location: up to 20 normalized place records
+    with ratings, addresses, and contact basics per request.'
+  input:
+    body:
+      categoryFilterWords:
+        type: array
+        required: false
+        note: Optional list of Google Maps place-category names to keep; results are limited to places
+          whose category matches one of these. Use lowercase category names as shown on Google Maps (e.g.
+          ["coffee shop", "restaurant"]). Omit to include all categories and stay on the cheapest price;
+          a category...
+      language:
+        type: string
+        required: false
+        note: Two-letter language code for the results (e.g. en).
+        default: en
+      limit:
+        type: integer
+        required: false
+        note: Maximum number of results to return (1-20, default 20). Pricing depends on the selected
+          provider and may be flat per request.
+        min: 1
+        max: 20
+        example: 1
+      location:
+        type: string
+        required: true
+        note: Free-text location to search in, ideally city plus country (e.g. Austin, USA).
+        example: Austin, TX
+      placeMinimumStars:
+        type: string
+        required: false
+        note: 'Only return places with at least this average rating: two (2+), twoAndHalf (2.5+), three
+          (3+), threeAndHalf (3.5+), four (4+), or fourAndHalf (4.5+). Places with no reviews are excluded.
+          Omit this field to stay on the cheapest price; a rating floor routes to a dearer source.'
+        enum:
+        - two
+        - twoAndHalf
+        - three
+        - threeAndHalf
+        - four
+        - fourAndHalf
+      query:
+        type: string
+        required: true
+        note: What you would type in the Google Maps search bar (e.g. coffee shop).
+        example: coffee
+      website:
+        type: string
+        required: false
+        note: 'Filter places by whether they list a website: allPlaces (default), withWebsite (only places
+          that have a website), or withoutWebsite (only places without one). Omit this field, or send
+          allPlaces, to stay on the cheapest price; withWebsite and withoutWebsite route to a dearer source.'
+        enum:
+        - allPlaces
+        - withWebsite
+        - withoutWebsite
+    bodyType: json
+  test_request:
+    body:
+      query: coffee
+      location: Austin, TX
+      limit: 1
+  cost:
+    type: per_success
+    value: 0.00175
+    currency: USD
+    unit: call
+    reported_charge:
+      path: costUsd
+      unit: usd
+    source: rate_card_api
+    source_url: https://api.getanyapi.com/v1/apis/maps.search
+    checked: '2026-09-08'
+    confidence: verified
+  docs_url: https://getanyapi.com/api/maps/search
+  note: 'Flat per request. The widest failover ceiling in this listing ($0.116): the two rescue sources
+    are far dearer than the primary, so send `max_cost_usd` if you need a hard per-call ceiling. AnyAPI
+    slug `maps.search`. 3 sources can serve it; the cheapest serves first and a failed attempt is retried
+    on the next, up to a $0.116 ceiling per request. Every response reports its exact charge as `costUsd`,
+    so `reported_charge` settles the real number rather than this estimate. A request no source could
+    serve is not charged. Send the `max_cost_usd` query parameter to refuse any source dearer than a price
+    you name.'
+- id: anyapi.instagram.user.profile
+  capability: instagram.user.profile
+  platform: instagram
+  scope: any_account
+  kind: data
+  method: POST
+  path: /v1/run/instagram.profile
+  name: Instagram Profile
+  summary: Fetch an Instagram account's public profile (followers, posts, bio, verification) by handle.
+  input:
+    body:
+      handle:
+        type: string
+        required: true
+        note: Instagram username without the leading @.
+        example: nasa
+    bodyType: json
+  test_request:
+    body:
+      handle: nasa
+  cost:
+    type: per_success
+    value: 0.0005
+    currency: USD
+    unit: call
+    reported_charge:
+      path: costUsd
+      unit: usd
+    source: rate_card_api
+    source_url: https://api.getanyapi.com/v1/apis/instagram.profile
+    checked: '2026-09-08'
+    confidence: verified
+  docs_url: https://getanyapi.com/api/instagram/profile
+  note: AnyAPI slug `instagram.profile`. 3 sources can serve it; the cheapest serves first and a failed
+    attempt is retried on the next, up to a $0.0024 ceiling per request. Every response reports its exact
+    charge as `costUsd`, so `reported_charge` settles the real number rather than this estimate. A request
+    no source could serve is not charged. Send the `max_cost_usd` query parameter to refuse any source
+    dearer than a price you name.
+- id: anyapi.instagram.user.posts
+  capability: instagram.user.posts
+  platform: instagram
+  scope: any_account
+  kind: data
+  method: POST
+  path: /v1/run/instagram.user_posts
+  name: Instagram User Posts
+  summary: List an Instagram account's recent posts (likes, comments, captions) by handle with cursor
+    pagination.
+  input:
+    body:
+      cursor:
+        type: string
+        required: false
+        note: Pagination cursor from a previous response's nextCursor.
+      handle:
+        type: string
+        required: true
+        note: Instagram username without the leading @.
+        example: nasa
+    bodyType: json
+  test_request:
+    body:
+      handle: nasa
+  cost:
+    type: per_success
+    value: 0.0012
+    currency: USD
+    unit: call
+    reported_charge:
+      path: costUsd
+      unit: usd
+    source: rate_card_api
+    source_url: https://api.getanyapi.com/v1/apis/instagram.user_posts
+    checked: '2026-09-08'
+    confidence: verified
+  docs_url: https://getanyapi.com/api/instagram/user-posts
+  note: AnyAPI slug `instagram.user_posts`. 5 sources can serve it; the cheapest serves first and a failed
+    attempt is retried on the next, up to a $0.0036 ceiling per request. Every response reports its exact
+    charge as `costUsd`, so `reported_charge` settles the real number rather than this estimate. A request
+    no source could serve is not charged. Send the `max_cost_usd` query parameter to refuse any source
+    dearer than a price you name.
+- id: anyapi.tiktok.user.profile
+  capability: tiktok.user.profile
+  platform: tiktok
+  scope: any_account
+  kind: data
+  method: POST
+  path: /v1/run/tiktok.profile
+  name: TikTok Profile
+  summary: Fetch a TikTok creator's public profile (followers, likes, bio, verification) by handle.
+  input:
+    body:
+      handle:
+        type: string
+        required: true
+        note: TikTok username without the leading @ (e.g. "stoolpresidente").
+        example: zachking
+    bodyType: json
+  test_request:
+    body:
+      handle: zachking
+  cost:
+    type: per_success
+    value: 0.0005
+    currency: USD
+    unit: call
+    reported_charge:
+      path: costUsd
+      unit: usd
+    source: rate_card_api
+    source_url: https://api.getanyapi.com/v1/apis/tiktok.profile
+    checked: '2026-09-08'
+    confidence: verified
+  docs_url: https://getanyapi.com/api/tiktok/profile
+  note: AnyAPI slug `tiktok.profile`. 3 sources can serve it; the cheapest serves first and a failed attempt
+    is retried on the next, up to a $0.0012 ceiling per request. Every response reports its exact charge
+    as `costUsd`, so `reported_charge` settles the real number rather than this estimate. A request no
+    source could serve is not charged. Send the `max_cost_usd` query parameter to refuse any source dearer
+    than a price you name.
+- id: anyapi.tiktok.search.videos
+  capability: tiktok.search.videos
+  platform: tiktok
+  scope: any_account
+  kind: data
+  method: POST
+  path: /v1/run/tiktok.search_keyword
+  name: TikTok Keyword Search
+  summary: Search TikTok by keyword and get matching videos (caption, views, likes, comments, shares)
+    as normalized JSON.
+  input:
+    body:
+      cursor:
+        type: string
+        required: false
+        note: Pagination cursor from a previous response.
+      datePosted:
+        type:
+        - integer
+        - string
+        required: false
+        note: Time frame filter. Use a canonical JSON integer that is nonnegative; common values are 0
+          for any time, 1 for the past 24 hours, 7 for the past week, and 30 for the past month. Legacy
+          numeric strings remain accepted.
+        default: 0
+        min: 0
+        example: 0
+      query:
+        type: string
+        required: true
+        note: The keyword to search TikTok for.
+        example: cooking
+      sortBy:
+        type:
+        - integer
+        - string
+        required: false
+        note: Sort order. Use the canonical JSON integer 0 for relevance or 1 for most liked; legacy numeric
+          strings remain accepted.
+        default: 0
+        enum:
+        - 0
+        - 1
+        - '0'
+        - '1'
+        example: 0
+    bodyType: json
+  test_request:
+    body:
+      query: cooking
+  cost:
+    type: per_success
+    value: 0.0012
+    currency: USD
+    unit: call
+    reported_charge:
+      path: costUsd
+      unit: usd
+    source: rate_card_api
+    source_url: https://api.getanyapi.com/v1/apis/tiktok.search_keyword
+    checked: '2026-09-08'
+    confidence: verified
+  docs_url: https://getanyapi.com/api/tiktok/search-keyword
+  note: AnyAPI slug `tiktok.search_keyword`. 3 sources can serve it; the cheapest serves first and a failed
+    attempt is retried on the next, up to a $0.0036 ceiling per request. Every response reports its exact
+    charge as `costUsd`, so `reported_charge` settles the real number rather than this estimate. A request
+    no source could serve is not charged. Send the `max_cost_usd` query parameter to refuse any source
+    dearer than a price you name.
+- id: anyapi.x.user.profile
+  capability: x.user.profile
+  platform: x
+  scope: any_account
+  kind: data
+  method: POST
+  path: /v1/run/twitter.profile
+  name: Twitter Profile
+  summary: Fetch a Twitter/X account's public profile (followers, tweets, bio, verification) by handle.
+  input:
+    body:
+      handle:
+        type: string
+        required: true
+        note: Twitter/X handle without the leading @.
+        example: nasa
+    bodyType: json
+  test_request:
+    body:
+      handle: nasa
+  cost:
+    type: per_success
+    value: 0.00022
+    currency: USD
+    unit: call
+    reported_charge:
+      path: costUsd
+      unit: usd
+    source: rate_card_api
+    source_url: https://api.getanyapi.com/v1/apis/twitter.profile
+    checked: '2026-09-08'
+    confidence: verified
+  docs_url: https://getanyapi.com/api/twitter/profile
+  note: AnyAPI slug `twitter.profile`. 5 sources can serve it; the cheapest serves first and a failed
+    attempt is retried on the next, up to a $0.0012 ceiling per request. Every response reports its exact
+    charge as `costUsd`, so `reported_charge` settles the real number rather than this estimate. A request
+    no source could serve is not charged. Send the `max_cost_usd` query parameter to refuse any source
+    dearer than a price you name.
+- id: anyapi.x.user.posts
+  capability: x.user.posts
+  platform: x
+  scope: any_account
+  kind: data
+  method: POST
+  path: /v1/run/twitter.user_tweets
+  name: X / Twitter User Tweets and Replies
+  summary: Get up to the requested limit of tweets and replies authored by an X (Twitter) account, with
+    engagement, views, language, and cursor pagination where available.
+  input:
+    body:
+      cursor:
+        type: string
+        required: false
+        note: Opaque pagination cursor from a previous response's nextCursor. Omit for the first page.
+      handle:
+        type: string
+        required: true
+        note: Twitter/X handle without the leading @.
+        example: levelsio
+      limit:
+        type: integer
+        required: false
+        note: Maximum number of authored tweets and replies to return in the current bulk call (1-1000).
+          The provider may return fewer results.
+        default: 20
+        min: 1
+        max: 1000
+        example: 20
+    bodyType: json
+  test_request:
+    body:
+      handle: levelsio
+      limit: 20
+  cost:
+    type: per_success
+    value: 0.0005
+    currency: USD
+    unit: call
+    reported_charge:
+      path: costUsd
+      unit: usd
+    source: rate_card_api
+    source_url: https://api.getanyapi.com/v1/apis/twitter.user_tweets
+    checked: '2026-09-08'
+    confidence: verified
+  docs_url: https://getanyapi.com/api/twitter/user-tweets
+  note: Priced flat per request at the default limit of 20. One of the four sources bills per result,
+    so a SMALL request can settle below this figure ($0.0002 observed at limit=1 on 2026-09-08); `costUsd`
+    reports the exact charge. AnyAPI slug `twitter.user_tweets`. 4 sources can serve it; the cheapest
+    serves first and a failed attempt is retried on the next, up to a $0.22 ceiling per request. Every
+    response reports its exact charge as `costUsd`, so `reported_charge` settles the real number rather
+    than this estimate. A request no source could serve is not charged. Send the `max_cost_usd` query
+    parameter to refuse any source dearer than a price you name.
+- id: anyapi.x.search.posts
+  capability: x.search.posts
+  platform: x
+  scope: any_account
+  kind: data
+  method: POST
+  path: /v1/run/twitter.search
+  name: X / Twitter Search
+  summary: 'Search X (Twitter) with full advanced-search syntax (operators like from:, since:, until:,
+    min_faves: work inline in the query) and get structured tweets with text, author, engagement, and
+    cursor pagination. Limit is a per-page maximum; native pages contain approximately 20 tweets unless
+    requireSinglePage selects a bulk lane.'
+  input:
+    body:
+      cursor:
+        type: string
+        required: false
+        note: Opaque pagination cursor from a previous response's nextCursor. Omit for the first page;
+          pass it to fetch the next page of search results.
+      limit:
+        type: integer
+        required: false
+        note: Per-page maximum number of results to return (1-50, default 20). A provider may return a
+          smaller native page; follow nextCursor for more.
+        default: 20
+        min: 1
+        max: 50
+        example: 20
+      query:
+        type: string
+        required: true
+        note: 'Search query using X (Twitter) advanced-search syntax. IMPORTANT: bare terms are ANDed
+          - a tweet must contain EVERY word, so a list of loosely related keywords matches nothing; use
+          one short phrase or OR between alternatives (e.g. ''anyapi OR getanyapi''). You can embed X
+          advanced-search operators...'
+        example: openai
+      queryType:
+        type: string
+        required: false
+        note: 'Result ranking: ''Latest'', ''Top'', ''Photos'', or ''Videos'' (e.g. Latest).'
+        default: Latest
+    bodyType: json
+  test_request:
+    body:
+      query: openai
+      limit: 20
+  cost:
+    type: per_success
+    value: 0.00065
+    currency: USD
+    unit: call
+    reported_charge:
+      path: costUsd
+      unit: usd
+    source: rate_card_api
+    source_url: https://api.getanyapi.com/v1/apis/twitter.search
+    checked: '2026-09-08'
+    confidence: verified
+  docs_url: https://getanyapi.com/api/twitter/search
+  note: Priced flat per request at the default limit of 20. As with `x.user.posts`, a per-result source
+    can settle a small request below this figure ($0.0002 observed at limit=1 on 2026-09-08). AnyAPI slug
+    `twitter.search`. 4 sources can serve it; the cheapest serves first and a failed attempt is retried
+    on the next, up to a $0.0154 ceiling per request. Every response reports its exact charge as `costUsd`,
+    so `reported_charge` settles the real number rather than this estimate. A request no source could
+    serve is not charged. Send the `max_cost_usd` query parameter to refuse any source dearer than a price
+    you name.
+- id: anyapi.linkedin.user.profile
+  capability: linkedin.user.profile
+  platform: linkedin
+  scope: any_account
+  kind: data
+  method: POST
+  path: /v1/run/linkedin.profile_thin
+  name: LinkedIn Profile (basic)
+  summary: 'Lightweight profile: name, avatar, location, followers, and a basic experience/education list
+    (company + dates only, no job titles, descriptions, or skills; past companies may be redacted). For
+    full experience detail, skills, certifications, connections, and verified flags use linkedin.profile.'
+  input:
+    body:
+      url:
+        type: string
+        required: true
+        note: Full LinkedIn profile URL.
+        example: https://www.linkedin.com/in/williamhgates
+    bodyType: json
+  test_request:
+    body:
+      url: https://www.linkedin.com/in/williamhgates
+  cost:
+    type: per_success
+    value: 0.0008
+    currency: USD
+    unit: call
+    reported_charge:
+      path: costUsd
+      unit: usd
+    source: rate_card_api
+    source_url: https://api.getanyapi.com/v1/apis/linkedin.profile_thin
+    checked: '2026-09-08'
+    confidence: verified
+  docs_url: https://getanyapi.com/api/linkedin/profile-thin
+  note: 'The cheap tier of the LinkedIn profile read: core profile fields only. `linkedin.profile` ($0.004)
+    returns the full record. AnyAPI slug `linkedin.profile_thin`. 2 sources can serve it; the cheapest
+    serves first and a failed attempt is retried on the next, up to a $0.0012 ceiling per request. Every
+    response reports its exact charge as `costUsd`, so `reported_charge` settles the real number rather
+    than this estimate. A request no source could serve is not charged. Send the `max_cost_usd` query
+    parameter to refuse any source dearer than a price you name.'
+- id: anyapi.linkedin.company.profile
+  capability: linkedin.company.profile
+  platform: linkedin
+  scope: any_account
+  kind: data
+  method: POST
+  path: /v1/run/linkedin.company_thin
+  name: LinkedIn Company (basic)
+  summary: 'Basic company: name, description, employee count, industry, logo, website, tagline. No follower
+    count, founded year, office locations, or funding data - for those use linkedin.company.'
+  input:
+    body:
+      url:
+        type: string
+        required: true
+        note: Full LinkedIn company page URL.
+        example: https://www.linkedin.com/company/stripe
+    bodyType: json
+  test_request:
+    body:
+      url: https://www.linkedin.com/company/stripe
+  cost:
+    type: per_success
+    value: 0.0012
+    currency: USD
+    unit: call
+    reported_charge:
+      path: costUsd
+      unit: usd
+    source: rate_card_api
+    source_url: https://api.getanyapi.com/v1/apis/linkedin.company_thin
+    checked: '2026-09-08'
+    confidence: verified
+  docs_url: https://getanyapi.com/api/linkedin/company-thin
+  note: The cheap tier of the LinkedIn company read. `linkedin.company` ($0.00143 per result) returns
+    the full record. AnyAPI slug `linkedin.company_thin`. 2 sources can serve it; the cheapest serves
+    first and a failed attempt is retried on the next, up to a $0.00253 ceiling per request. Every response
+    reports its exact charge as `costUsd`, so `reported_charge` settles the real number rather than this
+    estimate. A request no source could serve is not charged. Send the `max_cost_usd` query parameter
+    to refuse any source dearer than a price you name.
+- id: anyapi.reddit.subreddit.posts
+  capability: reddit.subreddit.posts
+  platform: reddit
+  scope: any_account
+  kind: data
+  method: POST
+  path: /v1/run/reddit.subreddit_posts
+  name: Reddit Subreddit Posts
+  summary: Fetch posts from a subreddit listing (hot, new, or top).
+  input:
+    body:
+      after:
+        type: string
+        required: false
+        note: Legacy pagination alias. Prefer `cursor`; omit both fields for the first page.
+      cursor:
+        type: string
+        required: false
+        note: Opaque pagination cursor from a previous response's `nextCursor`; omit for the first page.
+      limit:
+        type: integer
+        required: false
+        note: 'Requested number of posts. Note: the upstream returns one page (about 25 posts) per call;
+          values larger than a page are not delivered in a single response. To fetch more, pass `nextCursor`
+          back as `cursor`.'
+        default: 25
+        min: 1
+        max: 100
+        example: 1
+      sort:
+        type: string
+        required: false
+        note: Listing sort order.
+        default: hot
+        enum:
+        - hot
+        - new
+        - top
+      subreddit:
+        type: string
+        required: true
+        note: Subreddit name without the leading r/ (e.g. "golang").
+        example: programming
+      timeframe:
+        type: string
+        required: false
+        note: Time window, applied when sort is "top" (e.g. "year" for the year's top posts). Ignored
+          for hot/new. Omit to default to the current day for top.
+        enum:
+        - all
+        - year
+        - month
+        - week
+        - day
+        - hour
+    bodyType: json
+  test_request:
+    body:
+      subreddit: programming
+      limit: 1
+  cost:
+    type: per_success
+    value: 0.0005
+    currency: USD
+    unit: call
+    reported_charge:
+      path: costUsd
+      unit: usd
+    source: rate_card_api
+    source_url: https://api.getanyapi.com/v1/apis/reddit.subreddit_posts
+    checked: '2026-09-08'
+    confidence: verified
+  docs_url: https://getanyapi.com/api/reddit/subreddit-posts
+  note: AnyAPI slug `reddit.subreddit_posts`. 2 sources can serve it; the cheapest serves first and a
+    failed attempt is retried on the next, up to a $0.0012 ceiling per request. Every response reports
+    its exact charge as `costUsd`, so `reported_charge` settles the real number rather than this estimate.
+    A request no source could serve is not charged. Send the `max_cost_usd` query parameter to refuse
+    any source dearer than a price you name.
+- id: anyapi.youtube.video.detail
+  capability: youtube.video.detail
+  platform: youtube
+  scope: any_account
+  kind: data
+  method: POST
+  path: /v1/run/youtube.video
+  name: YouTube Video
+  summary: Fetch a YouTube video or Short's metadata (title, channel, views, likes, duration, publish
+    date) by URL or ID.
+  input:
+    body:
+      id:
+        type: string
+        required: false
+        note: YouTube video ID. A Short uses the same ID as any other video.
+      url:
+        type: string
+        required: false
+        note: Full YouTube video URL. Shorts (youtube.com/shorts/...), youtu.be, live, and embed URLs
+          all work.
+        example: https://www.youtube.com/watch?v=dQw4w9WgXcQ
+    bodyType: json
+  test_request:
+    body:
+      url: https://www.youtube.com/watch?v=dQw4w9WgXcQ
+  cost:
+    type: per_success
+    value: 0.0012
+    currency: USD
+    unit: call
+    reported_charge:
+      path: costUsd
+      unit: usd
+    source: rate_card_api
+    source_url: https://api.getanyapi.com/v1/apis/youtube.video
+    checked: '2026-09-08'
+    confidence: verified
+  docs_url: https://getanyapi.com/api/youtube/video
+  note: AnyAPI slug `youtube.video`. 2 sources can serve it; the cheapest serves first and a failed attempt
+    is retried on the next, up to a $0.00125 ceiling per request. Every response reports its exact charge
+    as `costUsd`, so `reported_charge` settles the real number rather than this estimate. A request no
+    source could serve is not charged. Send the `max_cost_usd` query parameter to refuse any source dearer
+    than a price you name.
