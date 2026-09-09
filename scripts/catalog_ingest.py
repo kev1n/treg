@@ -1243,7 +1243,7 @@ ANYAPI_PLATFORM = {
     "rednote": "xiaohongshu",
     "appstore": "app-store",
     "playstore": "google-play",
-    "maps": "google-business",
+    "maps": "google",
     "tiktok_shop": "tiktok-shop",
     "google_ads": "google-ads",
     "google_shopping": "google",
@@ -1284,10 +1284,12 @@ ANYAPI_EXCLUDE = frozenset({
 
 # Routing controls, not data inputs: they change which source serves and what it costs, never the
 # shape of the answer. Carrying them into every one of 300+ entries would bury the real parameters.
-ANYAPI_SKIP_PARAMS = {"preferLatencyUnderMs", "requireCursor", "requireSinglePage", "cursor"}
+ANYAPI_SKIP_PARAMS = {"preferLatencyUnderMs", "requireCursor", "requireSinglePage"}
 
 ANYAPI_RATE_CARD = "https://api.getanyapi.com/v1/apis?limit=1000"
 ANYAPI_OPENAPI = "https://api.getanyapi.com/openapi.json"
+# Bumped by hand when the rate card is re-read, so a re-run with no price change is byte-identical.
+ANYAPI_CHECKED = "2026-09-08"
 
 
 def _anyapi_input(schema: dict, example: dict) -> dict:
@@ -1312,32 +1314,27 @@ def _anyapi_input(schema: dict, example: dict) -> dict:
     return {"body": body, "bodyType": "json"}
 
 
-def _anyapi_cost(api: dict, checked: str) -> dict:
-    """The cheapest source's customer price, read from AnyAPI's own rate card.
+def _anyapi_cost(api: dict) -> dict:
+    """The cheapest source's price for one request, from AnyAPI's own live rate card.
 
-    Two shapes come back. `flat` is one number per request. `linear` is a base plus a per-result
-    rider, and its `maxUsd` is the price at the input's maximum — recorded as a per-result rate so
-    the reserve is the row's own ceiling rather than a single-result price.
-
-    In BOTH cases `reported_charge` is what actually settles: every AnyAPI 2xx carries a top-level
-    `costUsd` with the exact charge for that call, which is the only number that knows which source
-    served and how many rows came back.
+    Always the row's own `maxUsd` - the price at the input's maximum - rather than a per-result
+    rate. AnyAPI prices 274 of its SKUs flat per request and the rest as a base plus a per-result
+    rider, and treg's `per_result` shape carries no base: recording the rider alone would reserve
+    $0.0132 for a polymarket.markets call whose floor is $0.116. `maxUsd` is the conservative
+    reserve in both shapes, and `reported_charge` settles the difference from `costUsd`, which is
+    the only number that knows which source served and how many rows came back.
     """
-    price = api["pricing"]["from"]
-    cost = {"type": "per_success"}
-    if price.get("model") == "linear" and price.get("perUnitUsd"):
-        cost.update(type="per_result", value=price["perUnitUsd"], unit="result")
-    else:
-        cost.update(value=price["maxUsd"], unit="call")
-    cost.update(
-        currency="USD",
-        reported_charge={"path": "costUsd", "unit": "usd"},
-        source="rate_card_api",
-        source_url=f"https://api.getanyapi.com/v1/apis/{api['id']}",
-        checked=checked,
-        confidence="verified",
-    )
-    return cost
+    return {
+        "type": "per_success",
+        "value": api["pricing"]["from"]["maxUsd"],
+        "currency": "USD",
+        "unit": "call",
+        "reported_charge": {"path": "costUsd", "unit": "usd"},
+        "source": "rate_card_api",
+        "source_url": f"https://api.getanyapi.com/v1/apis/{api['id']}",
+        "checked": ANYAPI_CHECKED,
+        "confidence": "verified",
+    }
 
 
 def ingest_anyapi(refresh: bool = False):
@@ -1354,7 +1351,6 @@ def ingest_anyapi(refresh: bool = False):
     catalog = json.loads(fetch(ANYAPI_RATE_CARD, "anyapi_rate_card.json", refresh=refresh,
                                headers={"X-API-Key": key}))["apis"]
     skip = core_routes("anyapi")
-    checked = str(date.today())
     endpoints, unknown_platform = [], set()
     for api in sorted(catalog, key=lambda a: a["id"]):
         sku = api["id"]
@@ -1380,16 +1376,25 @@ def ingest_anyapi(refresh: bool = False):
             "name": clean(api["name"])[:60],
             "summary": clean(api["description"])[:400],
             "input": _anyapi_input(content.get("schema") or {}, example),
-            "cost": _anyapi_cost(api, checked),
+            "cost": _anyapi_cost(api),
             # One public page per SKU: live price, source routing and measured 30-day uptime.
             "docs_url": ("https://getanyapi.com/api/"
                          f"{prefix.replace('_', '-')}/{sku.split('.', 1)[1].replace('_', '-')}"),
         }
         # No `test_request` here: a freshly ingested entry has never been called, and the vendor's
         # own example values already ride on each input field for the verify pass to build one from.
+        lanes = len(api.get("lanes") or [])
+        ceiling = api["pricing"]["failoverMaxUsd"]
+        ep["note"] = (
+            f"AnyAPI slug `{sku}`. {lanes} source{'s' if lanes != 1 else ''} can serve it; the "
+            f"cheapest serves first and a failed attempt is retried on the next, up to a "
+            f"${ceiling:g} ceiling per request. `costUsd` on the response is the exact charge, "
+            f"which is what reported_charge settles. Send `max_cost_usd` to refuse any source "
+            f"dearer than a price you name."
+        )
         endpoints.append(ep)
         unknown_platform.add(platform)
-    source = {"method": "openapi + provider rate card", "ingested": checked,
+    source = {"method": "openapi + provider rate card", "ingested": ANYAPI_CHECKED,
               "spec_urls": [ANYAPI_OPENAPI, ANYAPI_RATE_CARD]}
     out = write_extended("anyapi", source, endpoints, [
         "Every SKU AnyAPI publishes, minus the routes curated in anyapi.yaml and the SKUs AnyAPI",

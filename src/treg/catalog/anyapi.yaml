@@ -98,7 +98,7 @@ endpoints:
       limit: 1
   cost:
     type: per_success
-    value: 0.0007
+    value: 0.0009
     currency: USD
     unit: call
     reported_charge:
@@ -110,7 +110,7 @@ endpoints:
     confidence: verified
   docs_url: https://getanyapi.com/api/google/search
   note: Flat per request whatever the result count. `google.search_100` returns up to 100 ranked results
-    for one flat charge and is cheaper past roughly 20 results. AnyAPI slug `google.search`. 2 sources
+    for one flat charge and is cheaper past roughly 20 results. AnyAPI slug `google.search`. 1 source
     can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.0009
     ceiling per request. Every response reports its exact charge as `costUsd`, so `reported_charge` settles
     the real number rather than this estimate. A request no source could serve is not charged. Send the
@@ -368,41 +368,45 @@ endpoints:
     so `reported_charge` settles the real number rather than this estimate. A request no source could
     serve is not charged. Send the `max_cost_usd` query parameter to refuse any source dearer than a price
     you name.'
-- id: anyapi.instagram.user.profile
-  capability: instagram.user.profile
-  platform: instagram
+- id: anyapi.facebook.user.profile
+  capability: facebook.user.profile
+  platform: facebook
   scope: any_account
   kind: data
   method: POST
-  path: /v1/run/instagram.profile
-  name: Instagram Profile
-  summary: Fetch an Instagram account's public profile (followers, posts, bio, verification) by handle.
+  path: /v1/run/facebook.profile
+  name: Facebook Profile
+  summary: Fetch a Facebook page's public profile (likes, followers, category, about) by URL or handle.
   input:
     body:
       handle:
         type: string
-        required: true
-        note: Instagram username without the leading @.
-        example: nasa
+        required: false
+        note: Facebook page handle/username.
+      url:
+        type: string
+        required: false
+        note: Full Facebook page URL.
+        example: https://www.facebook.com/nike
     bodyType: json
   test_request:
     body:
-      handle: nasa
+      url: https://www.facebook.com/nike
   cost:
     type: per_success
-    value: 0.0005
+    value: 0.0012
     currency: USD
     unit: call
     reported_charge:
       path: costUsd
       unit: usd
     source: rate_card_api
-    source_url: https://api.getanyapi.com/v1/apis/instagram.profile
+    source_url: https://api.getanyapi.com/v1/apis/facebook.profile
     checked: '2026-09-08'
     confidence: verified
-  docs_url: https://getanyapi.com/api/instagram/profile
-  note: AnyAPI slug `instagram.profile`. 3 sources can serve it; the cheapest serves first and a failed
-    attempt is retried on the next, up to a $0.0024 ceiling per request. Every response reports its exact
+  docs_url: https://getanyapi.com/api/facebook/profile
+  note: AnyAPI slug `facebook.profile`. 2 sources can serve it; the cheapest serves first and a failed
+    attempt is retried on the next, up to a $0.0036 ceiling per request. Every response reports its exact
     charge as `costUsd`, so `reported_charge` settles the real number rather than this estimate. A request
     no source could serve is not charged. Send the `max_cost_usd` query parameter to refuse any source
     dearer than a price you name.
