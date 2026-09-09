@@ -1282,6 +1282,19 @@ ANYAPI_EXCLUDE = frozenset({
     "technographics.theirstack",
 })
 
+# Four SKUs whose price cannot be one scalar. Each pairs a flat single-page source with a BULK
+# source priced per row whose input maximum is ~97,000 rows (twitter) or ~1,000 (instagram), so the
+# catalogued price is $0.00075-$0.0015 and the same endpoint can legitimately charge $1.43-$16.50.
+# Both numbers are real; neither describes the row. Listing the cheap one would reserve $0.00075
+# against a possible $16.50 settlement, and listing the dear one would put $16.50 on a shelf next
+# to $0.001 rivals. They sit an order of magnitude above every other row on both measures - the
+# next-largest gap between catalogued price and ceiling is $0.225 - so this is a real break in the
+# data rather than a chosen cutoff. They stay out until treg can bind a per-call ceiling
+# (AnyAPI accepts `?max_cost_usd=`, which platform_request cannot set today).
+ANYAPI_EXCLUDE_UNBOUNDED = frozenset({
+    "twitter.followers", "twitter.following", "instagram.followers", "instagram.following",
+})
+
 # Routing controls, not data inputs: they change which source serves and what it costs, never the
 # shape of the answer. Carrying them into every one of 300+ entries would bury the real parameters.
 ANYAPI_SKIP_PARAMS = {"preferLatencyUnderMs", "requireCursor", "requireSinglePage"}
@@ -1354,7 +1367,8 @@ def ingest_anyapi(refresh: bool = False):
     endpoints, unknown_platform = [], set()
     for api in sorted(catalog, key=lambda a: a["id"]):
         sku = api["id"]
-        if sku in ANYAPI_EXCLUDE or sku.startswith(ANYAPI_EXCLUDE_PREFIX):
+        if (sku in ANYAPI_EXCLUDE or sku in ANYAPI_EXCLUDE_UNBOUNDED
+                or sku.startswith(ANYAPI_EXCLUDE_PREFIX)):
             continue
         path = api["path"]
         if (api["method"].upper(), path) in skip:

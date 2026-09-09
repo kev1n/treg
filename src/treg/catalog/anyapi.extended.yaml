@@ -58,7 +58,7 @@ endpoints:
     checked: '2026-09-08'
     confidence: verified
   docs_url: https://getanyapi.com/api/chatgpt/search
-  note: AnyAPI slug `chatgpt.search`. 3 sources can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.004 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
+  note: AnyAPI slug `chatgpt.search`. 3 sources can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.0048 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
 - id: anyapi.gemini.search
   tier: extended
   platform: ai-search
@@ -88,7 +88,7 @@ endpoints:
     checked: '2026-09-08'
     confidence: verified
   docs_url: https://getanyapi.com/api/gemini/search
-  note: AnyAPI slug `gemini.search`. 2 sources can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.004 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
+  note: AnyAPI slug `gemini.search`. 2 sources can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.0048 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
 - id: anyapi.perplexity.search
   tier: extended
   platform: ai-search
@@ -3346,7 +3346,7 @@ endpoints:
     bodyType: json
   cost:
     type: per_success
-    value: 0.1756
+    value: 0.18864
     currency: USD
     unit: call
     reported_charge:
@@ -3357,7 +3357,7 @@ endpoints:
     checked: '2026-09-08'
     confidence: verified
   docs_url: https://getanyapi.com/api/seo/competitors-domain
-  note: AnyAPI slug `seo.competitors_domain`. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.1756 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
+  note: AnyAPI slug `seo.competitors_domain`. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.18864 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
 - id: anyapi.seo.domain_intersection
   tier: extended
   platform: google
@@ -3415,7 +3415,7 @@ endpoints:
     bodyType: json
   cost:
     type: per_success
-    value: 0.1756
+    value: 0.18864
     currency: USD
     unit: call
     reported_charge:
@@ -3426,7 +3426,7 @@ endpoints:
     checked: '2026-09-08'
     confidence: verified
   docs_url: https://getanyapi.com/api/seo/domain-intersection
-  note: AnyAPI slug `seo.domain_intersection`. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.1756 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
+  note: AnyAPI slug `seo.domain_intersection`. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.18864 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
 - id: anyapi.seo.domain_rank_overview
   tier: extended
   platform: google
@@ -3457,7 +3457,7 @@ endpoints:
     bodyType: json
   cost:
     type: per_success
-    value: 0.0156
+    value: 0.01455
     currency: USD
     unit: call
     reported_charge:
@@ -3468,7 +3468,7 @@ endpoints:
     checked: '2026-09-08'
     confidence: verified
   docs_url: https://getanyapi.com/api/seo/domain-rank-overview
-  note: AnyAPI slug `seo.domain_rank_overview`. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.0156 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
+  note: AnyAPI slug `seo.domain_rank_overview`. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.01455 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
 - id: anyapi.seo.domain_technologies
   tier: extended
   platform: google
@@ -3487,7 +3487,7 @@ endpoints:
     bodyType: json
   cost:
     type: per_success
-    value: 0.012
+    value: 0.0144
     currency: USD
     unit: call
     reported_charge:
@@ -3498,7 +3498,7 @@ endpoints:
     checked: '2026-09-08'
     confidence: verified
   docs_url: https://getanyapi.com/api/seo/domain-technologies
-  note: AnyAPI slug `seo.domain_technologies`. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.012 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
+  note: AnyAPI slug `seo.domain_technologies`. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.0144 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
 - id: anyapi.seo.domains_by_technology
   tier: extended
   platform: google
@@ -3547,7 +3547,7 @@ endpoints:
     bodyType: json
   cost:
     type: per_success
-    value: 0.132
+    value: 0.13464
     currency: USD
     unit: call
     reported_charge:
@@ -3558,7 +3558,7 @@ endpoints:
     checked: '2026-09-08'
     confidence: verified
   docs_url: https://getanyapi.com/api/seo/domains-by-technology
-  note: AnyAPI slug `seo.domains_by_technology`. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.132 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
+  note: AnyAPI slug `seo.domains_by_technology`. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.13464 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
 - id: anyapi.seo.keyword_difficulty
   tier: extended
   platform: google
@@ -3590,7 +3590,7 @@ endpoints:
     bodyType: json
   cost:
     type: per_success
-    value: 0.1756
+    value: 0.17438
     currency: USD
     unit: call
     reported_charge:
@@ -3601,7 +3601,7 @@ endpoints:
     checked: '2026-09-08'
     confidence: verified
   docs_url: https://getanyapi.com/api/seo/keyword-difficulty
-  note: AnyAPI slug `seo.keyword_difficulty`. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.1756 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
+  note: AnyAPI slug `seo.keyword_difficulty`. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.17438 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
 - id: anyapi.seo.keyword_ideas
   tier: extended
   platform: google
@@ -3655,7 +3655,7 @@ endpoints:
     bodyType: json
   cost:
     type: per_success
-    value: 0.1756
+    value: 0.17496
     currency: USD
     unit: call
     reported_charge:
@@ -3666,7 +3666,7 @@ endpoints:
     checked: '2026-09-08'
     confidence: verified
   docs_url: https://getanyapi.com/api/seo/keyword-ideas
-  note: AnyAPI slug `seo.keyword_ideas`. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.1756 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
+  note: AnyAPI slug `seo.keyword_ideas`. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.17496 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
 - id: anyapi.seo.keyword_overview
   tier: extended
   platform: google
@@ -3698,7 +3698,7 @@ endpoints:
     bodyType: json
   cost:
     type: per_success
-    value: 0.1276
+    value: 0.12638
     currency: USD
     unit: call
     reported_charge:
@@ -3709,7 +3709,7 @@ endpoints:
     checked: '2026-09-08'
     confidence: verified
   docs_url: https://getanyapi.com/api/seo/keyword-overview
-  note: AnyAPI slug `seo.keyword_overview`. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.1276 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
+  note: AnyAPI slug `seo.keyword_overview`. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.12638 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
 - id: anyapi.seo.keyword_suggestions
   tier: extended
   platform: google
@@ -3762,7 +3762,7 @@ endpoints:
     bodyType: json
   cost:
     type: per_success
-    value: 0.1756
+    value: 0.17496
     currency: USD
     unit: call
     reported_charge:
@@ -3773,7 +3773,7 @@ endpoints:
     checked: '2026-09-08'
     confidence: verified
   docs_url: https://getanyapi.com/api/seo/keyword-suggestions
-  note: AnyAPI slug `seo.keyword_suggestions`. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.1756 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
+  note: AnyAPI slug `seo.keyword_suggestions`. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.17496 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
 - id: anyapi.seo.local_pack
   tier: extended
   platform: google
@@ -3815,7 +3815,7 @@ endpoints:
     bodyType: json
   cost:
     type: per_success
-    value: 0.0026
+    value: 0.0024
     currency: USD
     unit: call
     reported_charge:
@@ -3826,7 +3826,7 @@ endpoints:
     checked: '2026-09-08'
     confidence: verified
   docs_url: https://getanyapi.com/api/seo/local-pack
-  note: AnyAPI slug `seo.local_pack`. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.0026 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
+  note: AnyAPI slug `seo.local_pack`. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.0024 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
 - id: anyapi.seo.ranked_keywords
   tier: extended
   platform: google
@@ -3874,7 +3874,7 @@ endpoints:
     bodyType: json
   cost:
     type: per_success
-    value: 0.1756
+    value: 0.17496
     currency: USD
     unit: call
     reported_charge:
@@ -3885,7 +3885,7 @@ endpoints:
     checked: '2026-09-08'
     confidence: verified
   docs_url: https://getanyapi.com/api/seo/ranked-keywords
-  note: AnyAPI slug `seo.ranked_keywords`. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.1756 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
+  note: AnyAPI slug `seo.ranked_keywords`. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.17496 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
 - id: anyapi.seo.related_keywords
   tier: extended
   platform: google
@@ -3940,7 +3940,7 @@ endpoints:
     bodyType: json
   cost:
     type: per_success
-    value: 0.1756
+    value: 0.17496
     currency: USD
     unit: call
     reported_charge:
@@ -3951,7 +3951,7 @@ endpoints:
     checked: '2026-09-08'
     confidence: verified
   docs_url: https://getanyapi.com/api/seo/related-keywords
-  note: AnyAPI slug `seo.related_keywords`. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.1756 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
+  note: AnyAPI slug `seo.related_keywords`. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.17496 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
 - id: anyapi.seo.search_intent
   tier: extended
   platform: google
@@ -3977,7 +3977,7 @@ endpoints:
     bodyType: json
   cost:
     type: per_success
-    value: 0.1756
+    value: 0.17438
     currency: USD
     unit: call
     reported_charge:
@@ -3988,7 +3988,7 @@ endpoints:
     checked: '2026-09-08'
     confidence: verified
   docs_url: https://getanyapi.com/api/seo/search-intent
-  note: AnyAPI slug `seo.search_intent`. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.1756 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
+  note: AnyAPI slug `seo.search_intent`. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.17438 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
 - id: anyapi.seo.search_volume
   tier: extended
   platform: google
@@ -4032,7 +4032,7 @@ endpoints:
     bodyType: json
   cost:
     type: per_success
-    value: 0.117
+    value: 0.108
     currency: USD
     unit: call
     reported_charge:
@@ -4043,7 +4043,7 @@ endpoints:
     checked: '2026-09-08'
     confidence: verified
   docs_url: https://getanyapi.com/api/seo/search-volume
-  note: AnyAPI slug `seo.search_volume`. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.117 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
+  note: AnyAPI slug `seo.search_volume`. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.108 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
 - id: anyapi.google_ads.ad_details
   tier: extended
   platform: google-ads
@@ -4533,80 +4533,6 @@ endpoints:
     confidence: verified
   docs_url: https://getanyapi.com/api/instagram/embed
   note: AnyAPI slug `instagram.embed`. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.0012 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
-- id: anyapi.instagram.followers
-  tier: extended
-  platform: instagram
-  domain: followers
-  method: POST
-  path: /v1/run/instagram.followers
-  name: Instagram Followers
-  summary: 'List the followers of any public Instagram account by username: follower usernames, names, and profile details.'
-  input:
-    body:
-      limit:
-        type: integer
-        required: false
-        note: 'How many followers you want (50-1000). By default results come back in cheap pages of up to ~50: follow the response''s nextCursor for more. With requireSinglePage true, up to this many are returned in one (pricier) call.'
-        min: 50
-        max: 1000
-        example: 50
-      username:
-        type: string
-        required: true
-        note: The Instagram username, user ID, or profile URL whose followers to list (e.g. natgeo).
-        example: nasa
-    bodyType: json
-  cost:
-    type: per_success
-    value: 0.0015
-    currency: USD
-    unit: call
-    reported_charge:
-      path: costUsd
-      unit: usd
-    source: rate_card_api
-    source_url: https://api.getanyapi.com/v1/apis/instagram.followers
-    checked: '2026-09-08'
-    confidence: verified
-  docs_url: https://getanyapi.com/api/instagram/followers
-  note: AnyAPI slug `instagram.followers`. 3 sources can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $1.43 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
-- id: anyapi.instagram.following
-  tier: extended
-  platform: instagram
-  domain: following
-  method: POST
-  path: /v1/run/instagram.following
-  name: Instagram Following
-  summary: 'List the accounts a public Instagram user follows: usernames, names, and profile details.'
-  input:
-    body:
-      limit:
-        type: integer
-        required: false
-        note: 'How many accounts you want (50-1000). By default results come back in cheap pages of up to ~50: follow the response''s nextCursor for more. With requireSinglePage true, up to this many are returned in one (pricier) call.'
-        min: 50
-        max: 1000
-        example: 50
-      username:
-        type: string
-        required: true
-        note: The Instagram username, user ID, or profile URL whose following list to fetch (e.g. natgeo).
-        example: nasa
-    bodyType: json
-  cost:
-    type: per_success
-    value: 0.0015
-    currency: USD
-    unit: call
-    reported_charge:
-      path: costUsd
-      unit: usd
-    source: rate_card_api
-    source_url: https://api.getanyapi.com/v1/apis/instagram.following
-    checked: '2026-09-08'
-    confidence: verified
-  docs_url: https://getanyapi.com/api/instagram/following
-  note: AnyAPI slug `instagram.following`. 3 sources can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $1.43 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
 - id: anyapi.instagram.hashtag_analytics
   tier: extended
   platform: instagram
@@ -9534,82 +9460,6 @@ endpoints:
     confidence: verified
   docs_url: https://getanyapi.com/api/twitter/community-tweets
   note: AnyAPI slug `twitter.community_tweets`. 4 sources can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.0036 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
-- id: anyapi.twitter.followers
-  tier: extended
-  platform: x
-  domain: followers
-  method: POST
-  path: /v1/run/twitter.followers
-  name: X / Twitter Followers
-  summary: Fetch the follower list of any public X (Twitter) account by username with cursor pagination. Limit is a per-page maximum; native pages contain up to 200 accounts unless requireSinglePage selects a bulk lane.
-  input:
-    body:
-      limit:
-        type: integer
-        required: false
-        note: Per-page maximum number of followers to return (1-100000, default 200). A provider may return a smaller native page; follow nextCursor for more.
-        default: 200
-        min: 1
-        max: 100000
-        example: 200
-      username:
-        type: string
-        required: true
-        note: The X (Twitter) username to fetch followers for, without the @ prefix (e.g. elonmusk).
-        example: nasa
-    bodyType: json
-  cost:
-    type: per_success
-    value: 0.00075
-    currency: USD
-    unit: call
-    reported_charge:
-      path: costUsd
-      unit: usd
-    source: rate_card_api
-    source_url: https://api.getanyapi.com/v1/apis/twitter.followers
-    checked: '2026-09-08'
-    confidence: verified
-  docs_url: https://getanyapi.com/api/twitter/followers
-  note: AnyAPI slug `twitter.followers`. 2 sources can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $16.5 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
-- id: anyapi.twitter.following
-  tier: extended
-  platform: x
-  domain: following
-  method: POST
-  path: /v1/run/twitter.following
-  name: X / Twitter Following
-  summary: List the accounts a public X (Twitter) account follows by username with cursor pagination. Limit is a per-page maximum; native pages contain up to 200 accounts unless requireSinglePage selects a bulk lane.
-  input:
-    body:
-      limit:
-        type: integer
-        required: false
-        note: Per-page maximum number of followed accounts to return (1-100000, default 200). A provider may return a smaller native page; follow nextCursor for more.
-        default: 200
-        min: 1
-        max: 100000
-        example: 200
-      username:
-        type: string
-        required: true
-        note: The X (Twitter) username to fetch the following list for, without the @ prefix (e.g. elonmusk).
-        example: nasa
-    bodyType: json
-  cost:
-    type: per_success
-    value: 0.00075
-    currency: USD
-    unit: call
-    reported_charge:
-      path: costUsd
-      unit: usd
-    source: rate_card_api
-    source_url: https://api.getanyapi.com/v1/apis/twitter.following
-    checked: '2026-09-08'
-    confidence: verified
-  docs_url: https://getanyapi.com/api/twitter/following
-  note: AnyAPI slug `twitter.following`. 2 sources can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $16.5 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
 - id: anyapi.twitter.search_communities
   tier: extended
   platform: x
