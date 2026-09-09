@@ -2290,6 +2290,40 @@ endpoints:
     confidence: verified
   docs_url: https://getanyapi.com/api/facebook/post-transcript
   note: AnyAPI slug `facebook.post_transcript`. 2 sources can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.036 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
+- id: anyapi.facebook.profile
+  tier: extended
+  platform: facebook
+  domain: profile
+  method: POST
+  path: /v1/run/facebook.profile
+  name: Facebook Profile
+  summary: Fetch a Facebook page's public profile (likes, followers, category, about) by URL or handle.
+  input:
+    body:
+      handle:
+        type: string
+        required: false
+        note: Facebook page handle/username.
+      url:
+        type: string
+        required: false
+        note: Full Facebook page URL.
+        example: https://www.facebook.com/nike
+    bodyType: json
+  cost:
+    type: per_success
+    value: 0.0012
+    currency: USD
+    unit: call
+    reported_charge:
+      path: costUsd
+      unit: usd
+    source: rate_card_api
+    source_url: https://api.getanyapi.com/v1/apis/facebook.profile
+    checked: '2026-09-08'
+    confidence: verified
+  docs_url: https://getanyapi.com/api/facebook/profile
+  note: AnyAPI slug `facebook.profile`. 2 sources can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.0036 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
 - id: anyapi.facebook.profile_events
   tier: extended
   platform: facebook
@@ -3214,6 +3248,62 @@ endpoints:
     confidence: verified
   docs_url: https://getanyapi.com/api/google/lens
   note: AnyAPI slug `google.lens`. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.00297 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
+- id: anyapi.google.news
+  tier: extended
+  platform: google
+  domain: news
+  method: POST
+  path: /v1/run/google.news
+  name: Google News
+  summary: Search Google News by keyword and get fresh articles (headlines, sources, links, and publish times) as clean JSON.
+  input:
+    body:
+      gl:
+        type: string
+        required: false
+        note: Two-letter country code for result localization (e.g. us, gb, de).
+        default: us
+        example: us
+      hl:
+        type: string
+        required: false
+        note: Two-letter interface and results language code (e.g. en, es, de).
+        default: en
+        example: en
+      limit:
+        type: integer
+        required: false
+        note: Requested article count (1-20, default 20). Google News returns its latest matching articles and may return more or fewer than requested. Price is flat per request.
+        min: 1
+        max: 20
+      location:
+        type: string
+        required: false
+        note: Fine-grained location for result localization, given as a canonical Google location string (e.g. 'New York, United States', 'London, United Kingdom'). More specific than the country-level gl.
+      query:
+        type: string
+        required: true
+        note: News search query; supports operators like '-', 'OR', and 'site:' (e.g. bitcoin site:cnn.com).
+        example: openai
+      timeframe:
+        type: string
+        required: false
+        note: 'How far back to search, written as a count plus a unit: h hours, d days, w weeks, m months, y years. So 2h is the last two hours, 30d the last thirty days, 6m the last six months. Omit this field, or send ''all'', to search without a time limit.'
+    bodyType: json
+  cost:
+    type: per_success
+    value: 0.00099
+    currency: USD
+    unit: call
+    reported_charge:
+      path: costUsd
+      unit: usd
+    source: rate_card_api
+    source_url: https://api.getanyapi.com/v1/apis/google.news
+    checked: '2026-09-08'
+    confidence: verified
+  docs_url: https://getanyapi.com/api/google/news
+  note: AnyAPI slug `google.news`. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.00099 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
 - id: anyapi.google.patents
   tier: extended
   platform: google
@@ -5328,52 +5418,6 @@ endpoints:
     confidence: verified
   docs_url: https://getanyapi.com/api/instagram/reel-transcript
   note: AnyAPI slug `instagram.reel_transcript`. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.0308 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
-- id: anyapi.instagram.reels_search
-  tier: extended
-  platform: instagram
-  domain: reels
-  method: POST
-  path: /v1/run/instagram.reels_search
-  name: Instagram Reels Search
-  summary: Search Instagram Reels by keyword and get matching reels (caption, likes, comments, creator, and duration). Instagram does not return view or play counts in reels search results. Results are relevance-ranked, not chronological. Paging tops out around 110 reels per query (11 pages of 10).
-  input:
-    body:
-      datePosted:
-        type: string
-        required: false
-        note: Recency hint, not a hard filter. Reel discovery runs on top of Google search, so this window narrows Google's index by when it discovered or last crawled the reel, which is not the same as when the reel was published to Instagram. Returned reels can have a createdUtc outside the requested window, an
-        enum:
-        - last-hour
-        - last-day
-        - last-week
-        - last-month
-        - last-year
-      page:
-        type: integer
-        required: false
-        note: 1-based results page.
-        default: 1
-        min: 1
-      query:
-        type: string
-        required: true
-        note: Search keyword (e.g. "crossfit").
-        example: travel
-    bodyType: json
-  cost:
-    type: per_success
-    value: 0.0012
-    currency: USD
-    unit: call
-    reported_charge:
-      path: costUsd
-      unit: usd
-    source: rate_card_api
-    source_url: https://api.getanyapi.com/v1/apis/instagram.reels_search
-    checked: '2026-09-08'
-    confidence: verified
-  docs_url: https://getanyapi.com/api/instagram/reels-search
-  note: AnyAPI slug `instagram.reels_search`. 2 sources can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.0015 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
 - id: anyapi.instagram.search
   tier: extended
   platform: instagram
@@ -5647,6 +5691,40 @@ endpoints:
     confidence: verified
   docs_url: https://getanyapi.com/api/instagram/user-highlights
   note: AnyAPI slug `instagram.user_highlights`. 2 sources can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.0015 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
+- id: anyapi.instagram.user_posts
+  tier: extended
+  platform: instagram
+  domain: user
+  method: POST
+  path: /v1/run/instagram.user_posts
+  name: Instagram User Posts
+  summary: List an Instagram account's recent posts (likes, comments, captions) by handle with cursor pagination.
+  input:
+    body:
+      cursor:
+        type: string
+        required: false
+        note: Pagination cursor from a previous response's nextCursor.
+      handle:
+        type: string
+        required: true
+        note: Instagram username without the leading @.
+        example: nasa
+    bodyType: json
+  cost:
+    type: per_success
+    value: 0.0012
+    currency: USD
+    unit: call
+    reported_charge:
+      path: costUsd
+      unit: usd
+    source: rate_card_api
+    source_url: https://api.getanyapi.com/v1/apis/instagram.user_posts
+    checked: '2026-09-08'
+    confidence: verified
+  docs_url: https://getanyapi.com/api/instagram/user-posts
+  note: AnyAPI slug `instagram.user_posts`. 5 sources can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.0036 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
 - id: anyapi.instagram.user_reels
   tier: extended
   platform: instagram
@@ -5997,6 +6075,36 @@ endpoints:
     confidence: verified
   docs_url: https://getanyapi.com/api/linkedin/company-posts-thin
   note: AnyAPI slug `linkedin.company_posts_thin`. 2 sources can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.00253 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
+- id: anyapi.linkedin.company_thin
+  tier: extended
+  platform: linkedin
+  domain: company
+  method: POST
+  path: /v1/run/linkedin.company_thin
+  name: LinkedIn Company (basic)
+  summary: 'Basic company: name, description, employee count, industry, logo, website, tagline. No follower count, founded year, office locations, or funding data - for those use linkedin.company.'
+  input:
+    body:
+      url:
+        type: string
+        required: true
+        note: Full LinkedIn company page URL.
+        example: https://www.linkedin.com/company/stripe
+    bodyType: json
+  cost:
+    type: per_success
+    value: 0.0012
+    currency: USD
+    unit: call
+    reported_charge:
+      path: costUsd
+      unit: usd
+    source: rate_card_api
+    source_url: https://api.getanyapi.com/v1/apis/linkedin.company_thin
+    checked: '2026-09-08'
+    confidence: verified
+  docs_url: https://getanyapi.com/api/linkedin/company-thin
+  note: AnyAPI slug `linkedin.company_thin`. 2 sources can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.00253 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
 - id: anyapi.linkedin.email
   tier: extended
   platform: linkedin
@@ -6141,94 +6249,6 @@ endpoints:
     confidence: verified
   docs_url: https://getanyapi.com/api/linkedin/jobs
   note: AnyAPI slug `linkedin.jobs`. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.0286 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
-- id: anyapi.linkedin.jobs_thin
-  tier: extended
-  platform: linkedin
-  domain: jobs
-  method: POST
-  path: /v1/run/linkedin.jobs_thin
-  name: LinkedIn Jobs (index)
-  summary: 'Cheap job index: title, company, location, posted date, URL. No description, salary, applicant counts, or seniority - for those use linkedin.jobs.'
-  input:
-    body:
-      companyId:
-        type: string
-        required: false
-        note: Filter to a specific company by its LinkedIn numeric company id.
-      employmentType:
-        type: string
-        required: false
-        note: Filter by employment type.
-        enum:
-        - full-time
-        - part-time
-        - contract
-        - internship
-        - temporary
-      experienceLevel:
-        type: string
-        required: false
-        note: Filter by required seniority/experience level.
-        enum:
-        - internship
-        - entry
-        - associate
-        - mid-senior
-        - director
-        - executive
-      geoId:
-        type: string
-        required: false
-        note: LinkedIn geo id to target a precise location (e.g. 103644278 for the United States); more exact than the free-text location.
-      limit:
-        type: integer
-        required: false
-        note: Maximum number of results to return (1-25, default 25).
-        min: 1
-        max: 25
-        example: 3
-      location:
-        type: string
-        required: false
-        note: City, region, or country to search within.
-        example: United States
-      postedLimit:
-        type: string
-        required: false
-        note: Only jobs posted within this window (past 24 hours, week, or month).
-        enum:
-        - 24h
-        - week
-        - month
-      query:
-        type: string
-        required: true
-        note: Job title or keywords to search.
-        example: software engineer
-      workplaceType:
-        type: string
-        required: false
-        note: Filter by workplace type (remote, hybrid, or onsite).
-        enum:
-        - remote
-        - hybrid
-        - onsite
-        example: remote
-    bodyType: json
-  cost:
-    type: per_success
-    value: 0.0005
-    currency: USD
-    unit: call
-    reported_charge:
-      path: costUsd
-      unit: usd
-    source: rate_card_api
-    source_url: https://api.getanyapi.com/v1/apis/linkedin.jobs_thin
-    checked: '2026-09-08'
-    confidence: verified
-  docs_url: https://getanyapi.com/api/linkedin/jobs-thin
-  note: AnyAPI slug `linkedin.jobs_thin`. 2 sources can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.00066 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
 - id: anyapi.linkedin.post
   tier: extended
   platform: linkedin
@@ -6561,47 +6581,6 @@ endpoints:
     confidence: verified
   docs_url: https://getanyapi.com/api/linkedin/search-companies
   note: AnyAPI slug `linkedin.search_companies`. 2 sources can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.0891 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
-- id: anyapi.linkedin.search_posts
-  tier: extended
-  platform: linkedin
-  domain: search
-  method: POST
-  path: /v1/run/linkedin.search_posts
-  name: LinkedIn Post Search
-  summary: Search public LinkedIn posts by keyword (text, link, publish date).
-  input:
-    body:
-      datePosted:
-        type: string
-        required: false
-        note: Filter by recency. One of last-hour, last-day, last-week, last-month, last-year.
-        enum:
-        - last-hour
-        - last-day
-        - last-week
-        - last-month
-        - last-year
-        example: last-week
-      query:
-        type: string
-        required: true
-        note: The post search query.
-        example: hiring
-    bodyType: json
-  cost:
-    type: per_success
-    value: 0.0012
-    currency: USD
-    unit: call
-    reported_charge:
-      path: costUsd
-      unit: usd
-    source: rate_card_api
-    source_url: https://api.getanyapi.com/v1/apis/linkedin.search_posts
-    checked: '2026-09-08'
-    confidence: verified
-  docs_url: https://getanyapi.com/api/linkedin/search-posts
-  note: AnyAPI slug `linkedin.search_posts`. 2 sources can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.018 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
 - id: anyapi.linkedin.search_posts_full
   tier: extended
   platform: linkedin
@@ -7420,36 +7399,6 @@ endpoints:
     confidence: verified
   docs_url: https://getanyapi.com/api/realtor/search
   note: AnyAPI slug `realtor.search`. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.0468 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
-- id: anyapi.reddit.post
-  tier: extended
-  platform: reddit
-  domain: post
-  method: POST
-  path: /v1/run/reddit.post
-  name: Reddit Post
-  summary: Fetch a single Reddit post by URL, including its full body text, score, comment count, upvote ratio, and subreddit, as normalized JSON.
-  input:
-    body:
-      url:
-        type: string
-        required: true
-        note: Full Reddit post URL in the /r/<subreddit>/comments/<id>/<slug>/ form, e.g. "https://www.reddit.com/r/IAmA/comments/z1c9z/i_am_barack_obama_president_of_the_united_states/". The short "reddit.com/comments/<id>" form is not accepted.
-        example: https://www.reddit.com/r/IAmA/comments/z1c9z/i_am_barack_obama_president_of_the_united_states/
-    bodyType: json
-  cost:
-    type: per_success
-    value: 0.0005
-    currency: USD
-    unit: call
-    reported_charge:
-      path: costUsd
-      unit: usd
-    source: rate_card_api
-    source_url: https://api.getanyapi.com/v1/apis/reddit.post
-    checked: '2026-09-08'
-    confidence: verified
-  docs_url: https://getanyapi.com/api/reddit/post
-  note: AnyAPI slug `reddit.post`. 5 sources can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.0036 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
 - id: anyapi.reddit.post_comments
   tier: extended
   platform: reddit
@@ -7544,57 +7493,6 @@ endpoints:
     confidence: verified
   docs_url: https://getanyapi.com/api/reddit/profile
   note: AnyAPI slug `reddit.profile`. 2 sources can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.00225 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
-- id: anyapi.reddit.search
-  tier: extended
-  platform: reddit
-  domain: search
-  method: POST
-  path: /v1/run/reddit.search
-  name: Reddit Search
-  summary: Search Reddit posts across all subreddits by query.
-  input:
-    body:
-      query:
-        type: string
-        required: true
-        note: 'Free-text search across all of Reddit. Reddit''s field operators are supported inside the string: subreddit:<name> to scope to one subreddit, author:<user>, title:<text>, selftext:<text>, self:yes|no, nsfw:yes|no, and boolean AND/OR/NOT. To restrict to a single subreddit you can use subreddit:<name> '
-        example: mechanical keyboard
-      sort:
-        type: string
-        required: false
-        note: Result sort order.
-        enum:
-        - relevance
-        - hot
-        - top
-        - new
-        - comments
-      timeframe:
-        type: string
-        required: false
-        note: Time window for results.
-        enum:
-        - hour
-        - day
-        - week
-        - month
-        - year
-        - all
-    bodyType: json
-  cost:
-    type: per_success
-    value: 0.0005
-    currency: USD
-    unit: call
-    reported_charge:
-      path: costUsd
-      unit: usd
-    source: rate_card_api
-    source_url: https://api.getanyapi.com/v1/apis/reddit.search
-    checked: '2026-09-08'
-    confidence: verified
-  docs_url: https://getanyapi.com/api/reddit/search
-  note: AnyAPI slug `reddit.search`. 4 sources can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.0036 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
 - id: anyapi.reddit.subreddit_details
   tier: extended
   platform: reddit
@@ -9016,6 +8914,62 @@ endpoints:
     confidence: verified
   docs_url: https://getanyapi.com/api/tiktok/search-hashtag
   note: AnyAPI slug `tiktok.search_hashtag`. 2 sources can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.0036 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
+- id: anyapi.tiktok.search_keyword
+  tier: extended
+  platform: tiktok
+  domain: search
+  method: POST
+  path: /v1/run/tiktok.search_keyword
+  name: TikTok Keyword Search
+  summary: Search TikTok by keyword and get matching videos (caption, views, likes, comments, shares) as normalized JSON.
+  input:
+    body:
+      cursor:
+        type: string
+        required: false
+        note: Pagination cursor from a previous response.
+      datePosted:
+        type:
+        - integer
+        - string
+        required: false
+        note: Time frame filter. Use a canonical JSON integer that is nonnegative; common values are 0 for any time, 1 for the past 24 hours, 7 for the past week, and 30 for the past month. Legacy numeric strings remain accepted.
+        default: 0
+        min: 0
+        example: 0
+      query:
+        type: string
+        required: true
+        note: The keyword to search TikTok for.
+        example: cooking
+      sortBy:
+        type:
+        - integer
+        - string
+        required: false
+        note: Sort order. Use the canonical JSON integer 0 for relevance or 1 for most liked; legacy numeric strings remain accepted.
+        default: 0
+        enum:
+        - 0
+        - 1
+        - '0'
+        - '1'
+        example: 0
+    bodyType: json
+  cost:
+    type: per_success
+    value: 0.0012
+    currency: USD
+    unit: call
+    reported_charge:
+      path: costUsd
+      unit: usd
+    source: rate_card_api
+    source_url: https://api.getanyapi.com/v1/apis/tiktok.search_keyword
+    checked: '2026-09-08'
+    confidence: verified
+  docs_url: https://getanyapi.com/api/tiktok/search-keyword
+  note: AnyAPI slug `tiktok.search_keyword`. 3 sources can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.0036 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
 - id: anyapi.tiktok.search_top
   tier: extended
   platform: tiktok
@@ -11853,53 +11807,6 @@ endpoints:
     confidence: verified
   docs_url: https://getanyapi.com/api/youtube/playlist
   note: AnyAPI slug `youtube.playlist`. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.0012 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
-- id: anyapi.youtube.search
-  tier: extended
-  platform: youtube
-  domain: search
-  method: POST
-  path: /v1/run/youtube.search
-  name: YouTube Search
-  summary: Search YouTube and get matching videos (title, channel, views, length, publish time) as normalized JSON.
-  input:
-    body:
-      query:
-        type: string
-        required: true
-        note: The YouTube search query.
-        example: how to cook rice
-      sortBy:
-        type: string
-        required: false
-        note: 'Sort order: "relevance" (default) or "popular" (most-viewed).'
-        default: relevance
-        enum:
-        - relevance
-        - popular
-      uploadDate:
-        type: string
-        required: false
-        note: Filter by upload recency. Omit for any time.
-        enum:
-        - today
-        - this_week
-        - this_month
-        - this_year
-    bodyType: json
-  cost:
-    type: per_success
-    value: 0.0005
-    currency: USD
-    unit: call
-    reported_charge:
-      path: costUsd
-      unit: usd
-    source: rate_card_api
-    source_url: https://api.getanyapi.com/v1/apis/youtube.search
-    checked: '2026-09-08'
-    confidence: verified
-  docs_url: https://getanyapi.com/api/youtube/search
-  note: AnyAPI slug `youtube.search`. 4 sources can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.0036 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
 - id: anyapi.youtube.search_hashtag
   tier: extended
   platform: youtube
@@ -12008,6 +11915,40 @@ endpoints:
     confidence: verified
   docs_url: https://getanyapi.com/api/youtube/trending-shorts
   note: AnyAPI slug `youtube.trending_shorts`. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.0012 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
+- id: anyapi.youtube.video
+  tier: extended
+  platform: youtube
+  domain: video
+  method: POST
+  path: /v1/run/youtube.video
+  name: YouTube Video
+  summary: Fetch a YouTube video or Short's metadata (title, channel, views, likes, duration, publish date) by URL or ID.
+  input:
+    body:
+      id:
+        type: string
+        required: false
+        note: YouTube video ID. A Short uses the same ID as any other video.
+      url:
+        type: string
+        required: false
+        note: Full YouTube video URL. Shorts (youtube.com/shorts/...), youtu.be, live, and embed URLs all work.
+        example: https://www.youtube.com/watch?v=dQw4w9WgXcQ
+    bodyType: json
+  cost:
+    type: per_success
+    value: 0.0012
+    currency: USD
+    unit: call
+    reported_charge:
+      path: costUsd
+      unit: usd
+    source: rate_card_api
+    source_url: https://api.getanyapi.com/v1/apis/youtube.video
+    checked: '2026-09-08'
+    confidence: verified
+  docs_url: https://getanyapi.com/api/youtube/video
+  note: AnyAPI slug `youtube.video`. 2 sources can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.00125 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
 - id: anyapi.youtube.video_comments
   tier: extended
   platform: youtube
