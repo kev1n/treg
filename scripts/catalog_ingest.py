@@ -1308,6 +1308,22 @@ ANYAPI_OPENAPI = "https://api.getanyapi.com/openapi.json"
 # Bumped by hand when the rate card is re-read, so a re-run with no price change is byte-identical.
 ANYAPI_CHECKED = "2026-09-09"
 
+# What AnyAPI actually billed, per SKU, over the trailing 60 days: a hand-exported snapshot of the
+# vendor's own request ledger (calls, p50, p90, max USD), the same arrangement as
+# scripts/data/justoneapi_prices.json. It needs the vendor's production database, so it cannot be
+# fetched here; re-export it and re-run to refresh. Only SKUs with at least 5 charged calls in the
+# window are in it - the rest fall back to the live rate card. See _anyapi_cost.
+ANYAPI_MEASURED_FILE = Path(__file__).parent / "data" / "anyapi_measured_charges.json"
+_ANYAPI_MEASURED: dict[str, dict] | None = None
+
+
+def _anyapi_measured() -> dict[str, dict]:
+    global _ANYAPI_MEASURED
+    if _ANYAPI_MEASURED is None:
+        _ANYAPI_MEASURED = (json.loads(ANYAPI_MEASURED_FILE.read_text()).get("skus", {})
+                            if ANYAPI_MEASURED_FILE.is_file() else {})
+    return _ANYAPI_MEASURED
+
 
 def _anyapi_input(schema: dict, example: dict) -> dict:
     """AnyAPI publishes one strict JSON Schema per SKU; carry it across verbatim minus the
@@ -1332,26 +1348,55 @@ def _anyapi_input(schema: dict, example: dict) -> dict:
 
 
 def _anyapi_cost(api: dict) -> dict:
-    """The cheapest source's price for one request, from AnyAPI's own live rate card.
+    """What a caller really pays for one request: the p90 of AnyAPI's own measured charges.
 
-    Always the row's own `maxUsd` - the price at the input's maximum - rather than a per-result
-    rate. AnyAPI prices 274 of its SKUs flat per request and the rest as a base plus a per-result
-    rider, and treg's `per_result` shape carries no base: recording the rider alone would reserve
-    $0.0132 for a polymarket.markets call whose floor is $0.116. `maxUsd` is the conservative
-    reserve in both shapes, and `reported_charge` settles the difference from `costUsd`, which is
-    the only number that knows which source served and how many rows came back.
+    `cost.value` is the 90th percentile of every charge AnyAPI billed for this SKU over the
+    trailing 60 days (ANYAPI_MEASURED_FILE), so the shelf price is what nine calls in ten settle at
+    or below. That replaces the rate card's `pricing.from.maxUsd` - the CHEAPEST source's price at
+    the input maximum - which is wrong in both directions wherever the ledger can check it: it
+    reads far LOW on a multi-source SKU whose cheap source rarely wins (ebay.search lists $0.0005
+    against a $0.03795 median real charge), far HIGH on a per-result SKU nobody calls at the input
+    maximum (instagram.hashtag_analytics lists $0.0385 against a $0.00297 p90), and it drifts every
+    time a source is quarantined and `pricing.from` recomputes. `maxUsd` is still the fallback for
+    a SKU with fewer than 5 charged calls in the window, where there is nothing to measure.
+
+    A p90 is deliberately NOT a ceiling. About one call in ten settles above the reserve, which
+    domain/money/settlement.py already designs for: the charge may exceed the reserve, the ledger
+    takes the difference from the balance, and the next reserve is the gate. Measured across the
+    same 60 days under the OLD, much-worse prices, that overrun was $18.66 on $695.05 settled -
+    2.7%. The listing prices for the buyer comparing shelves, not for the reserve.
+
+    `source: observed` is this catalog's own word for a price seen being billed rather than read
+    off a page (domain/catalog/store.COST_SOURCES); the rate-card fallback keeps `rate_card_api`.
+    `reported_charge` stays on every row either way: `costUsd` is the only number that knows which
+    source served and how many rows came back, and it is what settles.
     """
+    measured = _anyapi_measured().get(api["id"])
     return {
         "type": "per_success",
-        "value": api["pricing"]["from"]["maxUsd"],
+        "value": measured["p90_usd"] if measured else api["pricing"]["from"]["maxUsd"],
         "currency": "USD",
         "unit": "call",
         "reported_charge": {"path": "costUsd", "unit": "usd"},
-        "source": "rate_card_api",
+        "source": "observed" if measured else "rate_card_api",
         "source_url": f"https://api.getanyapi.com/v1/apis/{api['id']}",
         "checked": ANYAPI_CHECKED,
         "confidence": "verified",
     }
+
+
+def anyapi_price_basis(sku: str) -> str:
+    """One sentence naming where this row's price came from, for the row's own `note`.
+
+    Core rows are hand-curated but priced by the same rule, so this is shared rather than copied.
+    """
+    m = _anyapi_measured().get(sku)
+    if m:
+        return ("Price is the p90 of what AnyAPI really charged for this endpoint over the 60 days "
+                f"to {ANYAPI_CHECKED} ({m['calls']} charged calls, ${m['p50_usd']:g} median), not "
+                "a list price; roughly one call in ten settles above it.")
+    return (f"Too few charged calls in the 60 days to {ANYAPI_CHECKED} to measure, so the price is "
+            "the live rate card's cheapest source at the input maximum.")
 
 
 def ingest_anyapi(refresh: bool = False):
@@ -1404,7 +1449,8 @@ def ingest_anyapi(refresh: bool = False):
         lanes = len(api.get("lanes") or [])
         ceiling = api["pricing"]["failoverMaxUsd"]
         ep["note"] = (
-            f"AnyAPI slug `{sku}`. {lanes} source{'s' if lanes != 1 else ''} can serve it; the "
+            f"AnyAPI slug `{sku}`. {anyapi_price_basis(sku)} "
+            f"{lanes} source{'s' if lanes != 1 else ''} can serve it; the "
             f"cheapest serves first and a failed attempt is retried on the next, up to a "
             f"${ceiling:g} ceiling per request. `costUsd` on the response is the exact charge, "
             f"which is what reported_charge settles. Send `max_cost_usd` to refuse any source "
@@ -1417,8 +1463,13 @@ def ingest_anyapi(refresh: bool = False):
     out = write_extended("anyapi", source, endpoints, [
         "Every SKU AnyAPI publishes, minus the routes curated in anyapi.yaml and the SKUs AnyAPI",
         "excludes from this listing (ANYAPI_EXCLUDE in scripts/catalog_ingest.py).",
-        "Prices are the CHEAPEST source's customer price from the live rate card; every response",
-        "reports its exact charge as costUsd, which is what reported_charge settles on.",
+        "Prices are MEASURED: cost.value is the p90 of what AnyAPI actually billed for that SKU",
+        "over the 60 days to the ingest date (scripts/data/anyapi_measured_charges.json), so it is",
+        "what nine calls in ten settle at or below rather than the cheapest source's list price. A",
+        "SKU with too few charged calls to measure keeps the rate card's cheapest-source price and",
+        "says so in its note (cost.source: rate_card_api vs observed). One call in ten settles",
+        "ABOVE the reserve by design; every response reports its exact charge as costUsd, which is",
+        "what reported_charge settles on.",
     ], carry_capability=True)
     return out, {"endpoints": len(endpoints)}
 
