@@ -1402,9 +1402,12 @@ def _anyapi_cost(api: dict) -> dict:
     """
     measured = (None if api["id"] in ANYAPI_CORE_ROWS_PRICED_AT_CHEAPEST_SOURCE
                 else _anyapi_measured().get(api["id"]))
+    price = measured["p90_usd"] if measured else api["pricing"]["from"]["maxUsd"]
+    if measured:
+        price = max(price, _anyapi_flat_floor(api))
     return {
         "type": "per_success",
-        "value": measured["p90_usd"] if measured else api["pricing"]["from"]["maxUsd"],
+        "value": price,
         "currency": "USD",
         "unit": "call",
         "reported_charge": {"path": "costUsd", "unit": "usd"},
@@ -1414,6 +1417,24 @@ def _anyapi_cost(api: dict) -> dict:
         "confidence": "verified",
     }
 
+
+def _anyapi_flat_floor(api: dict) -> float:
+    """Today's true per-call floor for a FLAT-priced SKU, or 0 when there is no such floor.
+
+    A measured p90 is a statistic over the trailing 60 days, so it can sit BELOW the price the
+    catalog charges today: when a source is retired or quarantined, `pricing.from` recomputes
+    upward and every historical charge was cheaper than anything now on offer. Measured against
+    the live rate card, that is 13 rows, all at exactly 1.20x - one supplier's $0.001 lane went
+    away and $0.0012 is now the cheapest anyone can pay (tiktok.profile, and the weibo, zhihu and
+    douyin families). A ledger run caught it on tiktok.profile: claimed $0.001, metered $0.0012.
+
+    Only `model: flat` qualifies. On a per-result SKU `pricing.from.maxUsd` is the price at the
+    INPUT MAXIMUM rather than a floor - instagram.hashtag_analytics advertises $0.0385 against a
+    $0.00297 p90 - so clamping to it there would reinstate exactly the overstatement the measured
+    prices exist to remove.
+    """
+    pricing = (api.get("pricing") or {}).get("from") or {}
+    return pricing.get("maxUsd", 0.0) if pricing.get("model") == "flat" else 0.0
 
 def anyapi_price_basis(sku: str) -> str:
     """One sentence naming where this row's price came from, for the row's own `note`.

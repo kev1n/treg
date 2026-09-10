@@ -1074,7 +1074,7 @@ endpoints:
     bodyType: json
   cost:
     type: per_success
-    value: 0.001
+    value: 0.0012
     currency: USD
     unit: call
     reported_charge:
@@ -1234,7 +1234,7 @@ endpoints:
     bodyType: json
   cost:
     type: per_success
-    value: 0.001
+    value: 0.0012
     currency: USD
     unit: call
     reported_charge:
@@ -9702,7 +9702,7 @@ endpoints:
     bodyType: json
   cost:
     type: per_success
-    value: 0.0015
+    value: 0.0018
     currency: USD
     unit: call
     reported_charge:
@@ -9738,7 +9738,7 @@ endpoints:
     bodyType: json
   cost:
     type: per_success
-    value: 0.001
+    value: 0.0012
     currency: USD
     unit: call
     reported_charge:
@@ -9774,7 +9774,7 @@ endpoints:
     bodyType: json
   cost:
     type: per_success
-    value: 0.001
+    value: 0.0012
     currency: USD
     unit: call
     reported_charge:
@@ -9804,7 +9804,7 @@ endpoints:
     bodyType: json
   cost:
     type: per_success
-    value: 0.001
+    value: 0.0012
     currency: USD
     unit: call
     reported_charge:
@@ -9896,7 +9896,7 @@ endpoints:
     bodyType: json
   cost:
     type: per_success
-    value: 0.001
+    value: 0.0012
     currency: USD
     unit: call
     reported_charge:
@@ -11207,7 +11207,7 @@ endpoints:
     bodyType: json
   cost:
     type: per_success
-    value: 0.001
+    value: 0.0012
     currency: USD
     unit: call
     reported_charge:
@@ -11237,7 +11237,7 @@ endpoints:
     bodyType: json
   cost:
     type: per_success
-    value: 0.001
+    value: 0.0012
     currency: USD
     unit: call
     reported_charge:
@@ -11267,7 +11267,7 @@ endpoints:
     bodyType: json
   cost:
     type: per_success
-    value: 0.001
+    value: 0.0012
     currency: USD
     unit: call
     reported_charge:
@@ -11323,7 +11323,7 @@ endpoints:
     bodyType: json
   cost:
     type: per_success
-    value: 0.001
+    value: 0.0012
     currency: USD
     unit: call
     reported_charge:
@@ -11402,7 +11402,7 @@ endpoints:
     bodyType: json
   cost:
     type: per_success
-    value: 0.001
+    value: 0.0012
     currency: USD
     unit: call
     reported_charge:
