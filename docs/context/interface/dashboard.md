@@ -126,9 +126,8 @@ account controls are gone.
 
 ## Standalone Enrich Arena
 
-The catalog's Enrichment shelf includes a compact **Compare enrichment vendors** banner linking
-to `/enrich-arena`. It appears in both All and Enrichment category views, including the public
-catalog, and wraps its link below the copy on narrow screens. Other categories have no Arena banner.
+Signed-in users have an **Arena** sidebar link immediately after **Refer a friend**. It opens
+`/enrich-arena` in the same tab and is also available in the mobile navigation drawer.
 
 `/enrich-arena` and `/enrich-arena/leaderboard` share Arena | Leaderboard navigation, their
 own public layout and account controls, outside the dashboard shell. Arena keeps the vendor
