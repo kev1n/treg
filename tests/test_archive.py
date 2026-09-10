@@ -1375,3 +1375,144 @@ async def test_change_observation_failure_preserves_record(clients, shadow, monk
     assert len(snaps) == 2 and keys[0].change_seen == 1
     counter = "body_unavailable" if failure == "missing" else "observation_failed"
     assert archive.change_outcomes[counter] == before[counter] + 1
+
+
+@pytest.mark.parametrize('paths', [None, 'request_id', [1], [''], ['a..b'], ['a[0]'],
+                                  ['a.*.b'], ['$.a'], ['a.[*]'], ['a '], ['a\\.b']])
+@pytest.mark.parametrize('at_header', [False, True])
+def test_catalog_rejects_invalid_ignore_paths(tmp_path, paths, at_header):
+    import yaml
+    doc = {'provider': 'test', 'endpoints': [{'id': 'test.read', 'kind': 'read'}]}
+    target = doc if at_header else doc['endpoints'][0]
+    target['cache'] = {'mode': 'transient', 'ignore_paths': paths}
+    (tmp_path / 'test.yaml').write_text(yaml.safe_dump(doc))
+    with pytest.raises(ValueError, match='cache.ignore_paths'):
+        catalog_store.load(directory=tmp_path)
+
+
+def test_catalog_preserves_ignore_paths_and_defaults(tmp_path):
+    import yaml
+    paths = ['request_id', 'data[*].updated_at', '[*].id', 'matrix[*][*].meta.request-id']
+    doc = {'provider': 'test', 'cache': {'mode': 'transient', 'ignore_paths': paths},
+           'endpoints': [{'id': 'test.inherit'}, {'id': 'test.override', 'cache': {'mode': 'transient'}}]}
+    (tmp_path / 'test.yaml').write_text(yaml.safe_dump(doc))
+    cat = catalog_store.load(directory=tmp_path)
+    assert cat.by_id['test.inherit']['cache']['ignore_paths'] == paths
+    assert cat.by_id['test.override']['cache'].get('ignore_paths', []) == []
+    assert all(not (ep.get('cache') or {}).get('ignore_paths')
+               for ep in catalog_store.load().endpoints if isinstance(ep.get('cache'), dict))
+
+
+@pytest.mark.parametrize('old,new,paths,equal', [
+    ({'id': 1, 'a': 2}, {'a': 2, 'id': 3}, ['id'], True),
+    ({'a': 2}, {'a': 2, 'id': 3}, ['id'], True),
+    ({'a': 2}, {'a': 3}, ['missing'], False),
+    ({'rows': [{'id': 1, 'value': 2}]}, {'rows': [{'id': 3, 'value': 2}]}, ['rows[*].id'], True),
+    ({'rows': [{'id': 1}]}, {'rows': [{'id': 3}, {'id': 4}]}, ['rows[*].id'], False),
+    ({'rows': [1]}, {'rows': [2, 3]}, ['rows[*]'], True),
+    ([{'id': 1}], [{'id': 2}], ['[*].id'], True),
+    ([[{'id': 1}]], [[{'id': 2}]], ['[*][*].id'], True),
+    ({'a': True}, {'a': 1}, ['missing'], False),
+    ({'x': {'id': 1}}, {'x': {'id': 2}}, ['x', 'x.id'], True),
+])
+def test_ignore_normalization(old, new, paths, equal):
+    before, after = json.dumps(old).encode(), json.dumps(new).encode()
+    assert (archive._normalized_hash(before, paths) == archive._normalized_hash(after, paths)) is equal
+    assert json.loads(before) == old and json.loads(after) == new
+
+
+@pytest.mark.parametrize('raw', [b'not JSON', b'\xff', b'{"x":NaN}'])
+def test_ignore_non_json_uses_raw_comparison(raw):
+    assert archive._normalized_hash(raw, ['id']) is None
+    assert archive._normalized_hash(raw, ['x']) is None
+    assert archive._change_summary(raw, b'{}')['changed_paths'] == ['non_json']
+
+
+@pytest.mark.parametrize('paths,expected', [([], (0, 1, 1800)), (['request_id'], (1, 0, 5400))])
+async def test_ignore_only_changes_learning(clients, serve, monkeypatch, paths, expected):
+    from treg import analytics
+    from tests.test_marketplace_call import _fake_relay
+    monkeypatch.setitem(catalog_store.load().by_id[EP], 'cache',
+                        {'mode': 'transient', 'ignore_paths': paths})
+    events = []
+    monkeypatch.setattr(analytics, 'capture', lambda who, name, props, **kw: events.append((name, props)))
+    bodies = [b'{"request_id":1,"value":42}', b'{ "value":42, "request_id":2 }']
+    for raw in bodies:
+        monkeypatch.setattr(call_service, 'relay', _fake_relay(200, raw))
+        r = await clients.get(f'/call/{EP}?aweme_id=7', headers={'Cache-Control': 'no-cache'})
+        assert r.content == raw and 'x-treg-cache' not in r.headers
+        await archive.drain()
+    keys, snaps = await _rows()
+    assert (keys[0].stable_seen, keys[0].change_seen, keys[0].ttl_s) == expected
+    assert [snap.content_hash for snap in snaps] == [archive.content_hash(b) for b in bodies]
+    assert all(snap.body_of is None for snap in snaps)
+    for raw in bodies:
+        result = await archive.resolve_result(keys[0].key_hash, archive.content_hash(raw))
+        assert result['response']['body_text'] == raw.decode()
+    hit = await clients.get(f'/call/{EP}?aweme_id=7')
+    assert hit.headers['x-treg-cache'] == 'hit' and hit.content == bodies[-1]
+    await archive.drain()
+    observed = [p for name, p in events if name == 'archive_change_observed']
+    assert len(observed) == 1 and observed[0]['masked_by_ignore'] is bool(paths)
+
+
+async def test_missing_ignore_baseline_falls_back_to_bytes(clients, shadow, monkeypatch):
+    from treg import archive_bodies
+    from tests.test_marketplace_call import _fake_relay
+    monkeypatch.setitem(catalog_store.load().by_id[EP], 'cache',
+                        {'mode': 'transient', 'ignore_paths': ['request_id']})
+    monkeypatch.setattr(call_service, 'relay', _fake_relay(200, b'{"request_id":1}'))
+    await clients.get(f'/call/{EP}?aweme_id=7')
+    await archive.drain()
+    async def missing(*args, **kwargs):
+        return None
+    monkeypatch.setattr(archive_bodies, 'read', missing)
+    monkeypatch.setattr(call_service, 'relay', _fake_relay(200, b'{"request_id":2}'))
+    await clients.get(f'/call/{EP}?aweme_id=7')
+    keys, snaps = await _rows()
+    assert len(snaps) == 2 and (keys[0].stable_seen, keys[0].change_seen) == (0, 1)
+
+
+async def test_ignore_rechecks_baseline_after_concurrent_recording(clients, shadow, monkeypatch):
+    import asyncio
+    monkeypatch.setitem(catalog_store.load().by_id[EP], 'cache',
+                        {'mode': 'transient', 'ignore_paths': ['id']})
+    common = dict(method='GET', endpoint_id=EP, provider='tikhub', url='https://example.com/race',
+                  caller_body=b'', headers={}, status_code=200, media_type='application/json')
+    await archive._store(**common, body=b'{"id":1,"value":1}')
+    second = b'{"id":2,"value":1}'
+    entered, release = asyncio.Event(), asyncio.Event()
+    real = archive._ignored_matches
+    async def paused(kh, body, paths):
+        matches = await real(kh, body, paths)
+        if body == second:
+            assert matches
+            entered.set()
+            await release.wait()
+        return matches
+    monkeypatch.setattr(archive, '_ignored_matches', paused)
+    task = asyncio.create_task(archive._store(**common, body=second))
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        await archive._store(**common, body=b'{"id":3,"value":9}')
+    finally:
+        release.set()
+        await task
+    keys, snaps = await _rows()
+    assert len(snaps) == 3 and (keys[0].stable_seen, keys[0].change_seen) == (0, 2)
+
+
+async def test_refresh_observation_and_terminal_exclusion(clients, shadow, monkeypatch):
+    from treg import analytics
+    events = []
+    monkeypatch.setattr(analytics, 'capture', lambda who, name, props, **kw: events.append((name, props)))
+    monkeypatch.setitem(catalog_store.load().by_id[EP], 'cache',
+                        {'mode': 'transient', 'ignore_paths': ['id']})
+    common = dict(method='GET', endpoint_id=EP, provider='tikhub', url='https://example.com/origins',
+                  caller_body=b'', headers={}, status_code=200, media_type='application/json')
+    for i, origin in enumerate(('caller', 'refresh', 'async_terminal')):
+        await archive._store(**common, body=json.dumps({'id': i}).encode(), origin=origin)
+    keys, snaps = await _rows()
+    assert len(snaps) == 3 and (keys[0].stable_seen, keys[0].change_seen) == (1, 0)
+    observed = [p for name, p in events if name == 'archive_change_observed']
+    assert len(observed) == 1 and observed[0]['masked_by_ignore'] is True

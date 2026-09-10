@@ -927,3 +927,19 @@ async def test_change_observation_reads_r2_only_without_db_connection(clients, r
     observed = [p for name, p in events if name == 'archive_change_observed']
     assert len(observed) == 1
     assert observed[0]['changed_paths'] == ['data.comments[*].text']
+
+
+async def test_ignore_learning_reads_r2_only_without_db_connection(clients, r2, monkeypatch):
+    from treg.domain.catalog import store
+    monkeypatch.setattr(get_settings(), 'archive_body_write', 'r2')
+    monkeypatch.setattr(get_settings(), 'archive_mode', 'shadow')
+    monkeypatch.setitem(store.load().by_id[EP], 'cache',
+                        {'mode': 'transient', 'ignore_paths': ['data.comments[*].text']})
+    for body in (RAW, RAW.replace(b'hello', b'world')):
+        monkeypatch.setattr(service, 'relay', _fake_relay(200, body))
+        assert (await clients.get(URL)).content == body
+        await archive.drain()
+    async with db.session_maker() as s:
+        key = (await s.execute(select(ArchiveKey))).scalar_one()
+        assert (key.stable_seen, key.change_seen) == (1, 0)
+    assert all(row.body is None for row in await snapshots())

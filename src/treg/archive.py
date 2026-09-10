@@ -430,8 +430,8 @@ async def load_terminal_responses(tasks: list[tuple[str, str]]) -> dict[str, byt
 
 
 async def drain() -> None:
-    """Flush in-flight recordings — shutdown and tests. Bounded: every task carries its own
-    _STORE_TIMEOUT_S, so this cannot wait longer than the slowest permitted recording."""
+    """Flush in-flight recordings for shutdown and tests. Each task carries bounded upload,
+    write and optional change-analysis stages."""
     await archive_bodies.drain()
     while _pending:
         tasks = list(_pending)
@@ -531,6 +531,12 @@ async def _store(
             else:
                 plan = await archive_bodies.prepare(body, ch, mode=plan.storage, observation=observation)
 
+        from .domain.catalog import store as catalog_store
+        cache = (catalog_store.load().by_id.get(endpoint_id) or {}).get("cache")
+        ignore_paths = cache.get("ignore_paths", []) if isinstance(cache, dict) else []
+        ignored_matches = (await _ignored_matches(kh, body, ignore_paths)
+                           if ignore_paths and origin in ("caller", "refresh") else set())
+
         # Same-key waiters must queue before taking a scarce database-write slot. Otherwise four
         # duplicate recordings can occupy the whole semaphore while only one touches the database.
         async with asyncio.timeout(_TERMINAL_DB_S if origin == "async_terminal" else _STORE_TIMEOUT_S), _get_key_lock(kh):
@@ -539,19 +545,20 @@ async def _store(
                 # first-key race and multi-process SQLite, where SELECT FOR UPDATE is ignored.
                 for attempt in range(4):
                     try:
-                        previous_id = await _store_locked(
+                        change = await _store_locked(
                             method=method, endpoint_id=endpoint_id, provider=provider, url=url,
                             caller_body=caller_body, headers=headers, status_code=status_code,
                             media_type=media_type, body=body, origin=origin,
-                            key_hash=kh, body_hash=ch, plan=plan)
+                            key_hash=kh, body_hash=ch, plan=plan, ignored_matches=ignored_matches)
                         stored, reason = plan.storage, plan.reason
                         break
                     except IntegrityError:
                         if attempt == 3:
                             raise
                         await asyncio.sleep(0.01 * (attempt + 1))
-        if previous_id is not None:
-            await _observe_change(previous_id, body, endpoint_id, provider)
+        if change is not None:
+            previous_id, masked_by_ignore = change
+            await _observe_change(previous_id, body, endpoint_id, provider, masked_by_ignore)
     except asyncio.CancelledError:
         reason = "cancelled"
         raise
@@ -565,10 +572,87 @@ async def _store(
         observation.finish(storage=stored, reason=reason)
 
 
+def _change_json(body: bytes):
+    def invalid_constant(_value):
+        raise ValueError("non-JSON numeric constant")
+    return json.loads(body, parse_constant=invalid_constant)
+
+
+def _normalized_hash(body: bytes, paths: list[str]) -> str | None:
+    """Delete only declared paths in a parsed copy; raw bytes and their identity never change."""
+    try:
+        value = _change_json(body)
+
+        def remove(node, parts):
+            part, *rest = parts
+            if part == "[*]":
+                if isinstance(node, list):
+                    if rest:
+                        for child in node:
+                            remove(child, rest)
+                    else:
+                        node.clear()
+            elif isinstance(node, dict) and part in node:
+                if rest:
+                    remove(node[part], rest)
+                else:
+                    del node[part]
+
+        for path in paths:
+            # The catalog validates the grammar; keeping [*] as a token also supports root arrays.
+            parts = path.replace("[*]", ".[*]").lstrip(".").split(".")
+            remove(value, parts)
+        canonical = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+                               allow_nan=False).encode()
+        return content_hash(canonical)
+    except (ValueError, UnicodeError, RecursionError):
+        return None
+
+
+async def _ignored_matches(key_hash: str, body: bytes, paths: list[str]) -> set[int]:
+    """Pre-read at most latest/decisive bodies; the writer accepts only its actual baseline ID.
+
+    A concurrent writer can invalidate this sample. That observation falls back to raw hashes,
+    without keeping a DB connection/row lock across object I/O or adding a second write.
+    """
+    from sqlalchemy import select
+    from .infra.db import background_session_maker
+    from .models import ArchiveKey, ArchiveSnapshot
+
+    matches = set()
+    try:
+        async with asyncio.timeout(_CHANGE_TIMEOUT_S):
+            new_hash = await asyncio.to_thread(_normalized_hash, body, paths)
+            if new_hash is None:
+                return matches
+            async with background_session_maker() as s:
+                key = (await s.execute(select(ArchiveKey).where(
+                    ArchiveKey.key_hash == key_hash))).scalar_one_or_none()
+                if key is None:
+                    return matches
+                latest = (await s.execute(select(ArchiveSnapshot.id).where(
+                    ArchiveSnapshot.key_id == key.id).order_by(ArchiveSnapshot.version.desc())
+                    .limit(1))).scalar_one_or_none()
+                ids = {i for i in (latest, key.result_snapshot_id) if i is not None}
+                rows = (await s.execute(select(ArchiveSnapshot).where(
+                    ArchiveSnapshot.key_id == key.id, ArchiveSnapshot.id.in_(ids))
+                    .options(*archive_bodies.read_options("observation")))).scalars().all()
+                pointers = [(row.id, await archive_bodies.pointer(s, row, "observation")) for row in rows]
+            for snapshot_id, pointer in pointers:
+                previous = await archive_bodies.read(pointer, "observation")
+                if previous is None:
+                    change_outcomes["ignore_body_unavailable"] += 1
+                elif await asyncio.to_thread(_normalized_hash, previous, paths) == new_hash:
+                    matches.add(snapshot_id)
+    except Exception:
+        change_outcomes["ignore_comparison_failed"] += 1
+    return matches
+
+
 def _change_summary(old_body: bytes, new_body: bytes) -> dict:
     """Report structure only; array indices collapse, containers stop at depth six."""
     try:
-        old, new = json.loads(old_body), json.loads(new_body)
+        old, new = _change_json(old_body), _change_json(new_body)
     except (ValueError, UnicodeError, RecursionError):
         return dict(changed_paths=["non_json"], path_count=1, truncated=False,
                     leaf_count=0, sole_path="non_json", masked_by_ignore=False)
@@ -618,7 +702,8 @@ async def _read_change_body(snapshot_id: int) -> bytes | None:
     return await archive_bodies.read(pointer, "observation") if pointer is not None else None
 
 
-async def _observe_change(previous_id: int, body: bytes, endpoint_id: str, provider: str) -> None:
+async def _observe_change(previous_id: int, body: bytes, endpoint_id: str, provider: str,
+                          masked_by_ignore: bool = False) -> None:
     from . import analytics
 
     try:
@@ -628,6 +713,7 @@ async def _observe_change(previous_id: int, body: bytes, endpoint_id: str, provi
                 change_outcomes["body_unavailable"] += 1
                 return
             props = await asyncio.to_thread(_change_summary, previous, body)
+            props["masked_by_ignore"] = masked_by_ignore
             analytics.capture("archive", "archive_change_observed",
                               dict(endpoint_id=endpoint_id, provider=provider, **props))
             change_outcomes["observed"] += 1
@@ -674,7 +760,8 @@ async def _store_locked(
     key_hash: str | None = None,
     body_hash: str | None = None,
     plan: archive_bodies.WritePlan,
-) -> int | None:
+    ignored_matches: set[int] | None = None,
+) -> tuple[int, bool] | None:
     from sqlalchemy import select
     from sqlalchemy.exc import IntegrityError
 
@@ -764,9 +851,12 @@ async def _store_locked(
 
         previous_state = key.result_state if result_aware else "found"
         next_state = result.state if result_aware else "found"
+        masked_by_ignore = False
         decisive = next_state in ("found", "empty") and origin != "async_terminal"
         if decisive and baseline is not None and (previous_state, next_state) != ("empty", "empty"):
-            stable = previous_state == next_state == "found" and baseline.content_hash == ch
+            stable = previous_state == next_state == "found" and (
+                baseline.content_hash == ch or baseline.id in (ignored_matches or ()))
+            masked_by_ignore = stable and baseline.content_hash != ch
             if stable:
                 key.stable_seen += 1
             else:
@@ -791,7 +881,7 @@ async def _store_locked(
             stable_d=key.stable_seen - seen_before[0], changed_d=key.change_seen - seen_before[1],
             kept=plan.storage is not None, size=len(body), now=now)
         await s.commit()
-        return (newest.id if newest is not None and newest.content_hash != ch
+        return ((newest.id, masked_by_ignore) if newest is not None and newest.content_hash != ch
                 and origin in ("caller", "refresh") else None)
 
 
