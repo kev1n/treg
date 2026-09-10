@@ -1306,3 +1306,72 @@ async def test_strict_comparison_preserves_existing_ttl(clients, serve, monkeypa
     assert props["cache_outcome"] == outcome
     if timer > 0:
         assert props["cache_window_s"] == timer
+
+
+@pytest.mark.parametrize("old,new,paths", [
+    ({"items": [{"id": 1}, {"id": 2}]}, {"items": [{"id": 3}, {"id": 4}]}, ["items[*].id"]),
+    ({"a": 1}, {"b": 2}, ["a", "b"]),
+    ({"a": True}, {"a": 1}, ["a"]),
+    ({"a": {"b": {"c": {"d": {"e": {"f": {"g": 1}}}}}}},
+     {"a": {"b": {"c": {"d": {"e": {"f": {"g": 2}}}}}}}, ["a.b.c.d.e.f"]),
+    ([1], [1, 2], ["[*]"]),
+    ({}, {}, []),
+])
+def test_change_summary_paths(old, new, paths):
+    props = archive._change_summary(json.dumps(old).encode(), json.dumps(new).encode())
+    assert props["changed_paths"] == paths
+    assert props["path_count"] == len(paths)
+    assert props["sole_path"] == (paths[0] if len(paths) == 1 else None)
+
+
+def test_change_summary_bounds_and_non_json():
+    props = archive._change_summary(b'{}', json.dumps({f"p{i}": i for i in range(25)}).encode())
+    assert len(props["changed_paths"]) == 20
+    assert props["path_count"] == props["leaf_count"] == 25
+    assert props["truncated"] and props["sole_path"] is None
+    assert archive._change_summary(b'not json', b'{}')["changed_paths"] == ["non_json"]
+
+
+async def test_change_observation_is_read_only(clients, shadow, monkeypatch):
+    from treg import analytics
+    from tests.test_marketplace_call import _fake_relay
+    events = []
+    monkeypatch.setattr(analytics, "capture", lambda who, name, props, **kw: events.append((name, props)))
+    bodies = [b'{"request_id":"secret-one","value":42}',
+              b'{"request_id":"secret-two","value":42}']
+    for body in bodies + [bodies[-1]]:
+        monkeypatch.setattr(call_service, "relay", _fake_relay(200, body))
+        response = await clients.get(f"/call/{EP}?aweme_id=7")
+        assert response.content == body
+        await archive.drain()
+    keys, snaps = await _rows()
+    assert (keys[0].change_seen, keys[0].stable_seen, keys[0].ttl_s) == (1, 1, 2700)
+    assert snaps[2].body_of == snaps[1].id
+    props = [p for name, p in events if name == "archive_change_observed"]
+    assert props == [dict(endpoint_id=EP, provider="tikhub", changed_paths=["request_id"],
+                          path_count=1, leaf_count=2, sole_path="request_id", truncated=False,
+                          masked_by_ignore=False)]
+    assert "secret" not in json.dumps(props) and "call_ref" not in props[0]
+
+
+@pytest.mark.parametrize("failure", ["missing", "exception", "timeout"])
+async def test_change_observation_failure_preserves_record(clients, shadow, monkeypatch, failure):
+    import asyncio
+    from tests.test_marketplace_call import _fake_relay
+    await clients.get(f"/call/{EP}?aweme_id=7")
+    await archive.drain()
+    async def unavailable(*args):
+        if failure == "exception":
+            raise RuntimeError("must not leak")
+        if failure == "timeout":
+            await asyncio.Event().wait()
+        return None
+    monkeypatch.setattr(archive, "_read_change_body", unavailable)
+    monkeypatch.setattr(archive, "_CHANGE_TIMEOUT_S", 0.05)
+    before = archive.change_outcomes.copy()
+    monkeypatch.setattr(call_service, "relay", _fake_relay(200, b'{"new":42}'))
+    assert (await clients.get(f"/call/{EP}?aweme_id=7")).status_code == 200
+    keys, snaps = await _rows()
+    assert len(snaps) == 2 and keys[0].change_seen == 1
+    counter = "body_unavailable" if failure == "missing" else "observation_failed"
+    assert archive.change_outcomes[counter] == before[counter] + 1

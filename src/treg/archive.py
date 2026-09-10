@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import json
 from typing import Any
+from collections import Counter
 from urllib.parse import parse_qsl
 
 from .config import get_settings
@@ -261,6 +262,8 @@ def _get_key_lock(key_hash: str) -> asyncio.Lock:
 # or a shutdown hostage. CI's serial Postgres job hung exactly that way three times before this
 # bound existed, at whichever drain() happened to gather the stuck task.
 _STORE_TIMEOUT_S = 30
+_CHANGE_TIMEOUT_S = 3
+change_outcomes: Counter[str] = Counter()
 
 
 def _utcnow() -> datetime:
@@ -536,17 +539,19 @@ async def _store(
                 # first-key race and multi-process SQLite, where SELECT FOR UPDATE is ignored.
                 for attempt in range(4):
                     try:
-                        await _store_locked(
+                        previous_id = await _store_locked(
                             method=method, endpoint_id=endpoint_id, provider=provider, url=url,
                             caller_body=caller_body, headers=headers, status_code=status_code,
                             media_type=media_type, body=body, origin=origin,
                             key_hash=kh, body_hash=ch, plan=plan)
                         stored, reason = plan.storage, plan.reason
-                        return
+                        break
                     except IntegrityError:
                         if attempt == 3:
                             raise
                         await asyncio.sleep(0.01 * (attempt + 1))
+        if previous_id is not None:
+            await _observe_change(previous_id, body, endpoint_id, provider)
     except asyncio.CancelledError:
         reason = "cancelled"
         raise
@@ -558,6 +563,77 @@ async def _store(
         _log.error("archive recording dropped for %s", endpoint_id, exc_info=True)
     finally:
         observation.finish(storage=stored, reason=reason)
+
+
+def _change_summary(old_body: bytes, new_body: bytes) -> dict:
+    """Report structure only; array indices collapse, containers stop at depth six."""
+    try:
+        old, new = json.loads(old_body), json.loads(new_body)
+    except (ValueError, UnicodeError, RecursionError):
+        return dict(changed_paths=["non_json"], path_count=1, truncated=False,
+                    leaf_count=0, sole_path="non_json", masked_by_ignore=False)
+
+    paths: set[str] = set()
+    missing = object()
+
+    def walk(left, right, path, depth):
+        if (type(left) is type(right)
+                and json.dumps(left, sort_keys=True) == json.dumps(right, sort_keys=True)):
+            return
+        if depth >= 6:
+            paths.add(path or "$")
+        elif isinstance(left, dict) and isinstance(right, dict):
+            for key in left.keys() | right.keys():
+                walk(left.get(key, missing), right.get(key, missing),
+                     f"{path}.{key}" if path else key, depth + 1)
+        elif isinstance(left, list) and isinstance(right, list):
+            for i in range(max(len(left), len(right))):
+                walk(left[i] if i < len(left) else missing,
+                     right[i] if i < len(right) else missing, path + "[*]", depth + 1)
+        else:
+            paths.add(path or "$")
+
+    def leaves(value, depth=0):
+        if depth >= 6 or not isinstance(value, (dict, list)) or not value:
+            return 1
+        return sum(leaves(v, depth + 1) for v in
+                   (value.values() if isinstance(value, dict) else value))
+
+    walk(old, new, "", 0)
+    ordered = sorted(paths)
+    return dict(changed_paths=ordered[:20], path_count=len(paths), truncated=len(paths) > 20,
+                leaf_count=leaves(new), sole_path=ordered[0] if len(paths) == 1 else None,
+                masked_by_ignore=False)
+
+
+async def _read_change_body(snapshot_id: int) -> bytes | None:
+    from sqlalchemy import select
+    from .infra.db import background_session_maker
+    from .models import ArchiveSnapshot
+
+    async with background_session_maker() as s:
+        row = (await s.execute(select(ArchiveSnapshot).where(ArchiveSnapshot.id == snapshot_id)
+                              .options(*archive_bodies.read_options("observation")))).scalar_one_or_none()
+        pointer = await archive_bodies.pointer(s, row, "observation") if row is not None else None
+    return await archive_bodies.read(pointer, "observation") if pointer is not None else None
+
+
+async def _observe_change(previous_id: int, body: bytes, endpoint_id: str, provider: str) -> None:
+    from . import analytics
+
+    try:
+        async with asyncio.timeout(_CHANGE_TIMEOUT_S):
+            previous = await _read_change_body(previous_id)
+            if previous is None:
+                change_outcomes["body_unavailable"] += 1
+                return
+            props = await asyncio.to_thread(_change_summary, previous, body)
+            analytics.capture("archive", "archive_change_observed",
+                              dict(endpoint_id=endpoint_id, provider=provider, **props))
+            change_outcomes["observed"] += 1
+    except Exception:
+        # Observation is optional and happens after commit. Never log provider bytes/errors.
+        change_outcomes["observation_failed"] += 1
 
 
 async def _lock_archive_key(s, key_id: int):
@@ -598,7 +674,7 @@ async def _store_locked(
     key_hash: str | None = None,
     body_hash: str | None = None,
     plan: archive_bodies.WritePlan,
-) -> None:
+) -> int | None:
     from sqlalchemy import select
     from sqlalchemy.exc import IntegrityError
 
@@ -715,6 +791,8 @@ async def _store_locked(
             stable_d=key.stable_seen - seen_before[0], changed_d=key.change_seen - seen_before[1],
             kept=plan.storage is not None, size=len(body), now=now)
         await s.commit()
+        return (newest.id if newest is not None and newest.content_hash != ch
+                and origin in ("caller", "refresh") else None)
 
 
 

@@ -244,7 +244,7 @@ fixed phase-1 guesses.
 **Strict comparison.** Result admission still selects the decisive baseline and controls which
 transitions train TTL. Among found-to-found observations, identical raw hashes count stable and
 differing hashes count changed. The legacy field-noise heuristic is removed; hash comparison
-never fetches an old R2 body.
+does not depend on observation reads.
 
 ## The refresh worker (PR 5)
 
@@ -627,3 +627,70 @@ zero transfer/wait time. Do not interpret these post-fix per-record values as on
 latency, or average duplicate statuses and zero-transfer failed waiters into physical PUT latency. R2 pending accounting spans the
 recording's DB completion too; it is not just the number of active PUTs. Compare existing failure/
 drop reasons, leader timing, and duplicate statuses after rollout before increasing queue budgets.
+
+
+## Change observation
+
+After `_store_locked` commits, `_observe_change` reports a byte-hash change from the immediately
+preceding snapshot for `caller` and `refresh` origins only. Cache hits and async terminal evidence
+never emit `archive_change_observed`. The background task has a separate three-second observation
+budget after the existing 30-second DB stage. Failure cannot undo or prevent the recording.
+`_read_change_body` collects an `archive_bodies.pointer` in a short background session, closes it,
+then calls `archive_bodies.read`. The internal `observation` read path follows published R2
+locations (including R2-only rows), with the normal verified GET and DB fallback. No new DB writes,
+tables, per-key detail or configuration switches are introduced. Process-local `change_outcomes`
+counts `observed`, `body_unavailable` and `observation_failed`; missing bytes skip the event.
+
+`_change_summary` runs off the event loop. JSON differences use dot paths, collapse array indices
+to `[*]`, stop at six levels and retain the first 20 sorted distinct paths. `path_count` counts all
+distinct paths before truncation; `truncated` marks more than 20. Added/removed fields, array length
+and type changes count; a changed container at the depth boundary counts at its boundary path.
+Root changes use `$`. `leaf_count` counts new-body leaves at the same depth boundary (empty
+containers count as one). Byte-only whitespace/key-order changes can have zero changed paths.
+Non-JSON pairs use `changed_paths: [non_json]`, `path_count: 1`, `leaf_count: 0`.
+`sole_path` is the sole path when count is one, otherwise null.
+
+Analytics emits `archive_change_observed` with distinct ID `archive` and only `endpoint_id`,
+`provider`, `changed_paths`, `path_count`, `truncated`, `leaf_count`, `sole_path` and
+`masked_by_ignore` (false until a declared ignore comparison masks a change). No values, body
+snippets, call references or key identities are sent. Paths are structural property names from JSON;
+these reports are not a schema or evidence that a field is safe to ignore. Observation is read-only
+and does not alter admission, learning, stored bytes, deduplication or serving.
+
+### Seven-day HogQL review
+
+Paste into the PostHog SQL editor. One row per endpoint/path; all ratios use that endpoint's
+observed byte changes as denominator. `sole_change_ratio` counts events where that path alone
+changed; `endpoint_sole_ratio` counts any sole-path change. Empty path lists remain in the total.
+Truncation makes per-path ratios lower bounds, so inspect `truncated_ratio` before choosing a
+list. Missing bodies and dropped analytics are not in these denominators. `non_json` is a marker,
+not an ignore candidate. SQL uses PostHog's supported [JSON/array functions](https://posthog.com/docs/sql/clickhouse-functions).
+
+```sql
+WITH observed AS (
+    SELECT properties.endpoint_id AS endpoint_id,
+           properties.sole_path AS sole_path,
+           toInt(properties.path_count) AS path_count,
+           properties.truncated = true AS truncated,
+           JSONExtract(ifNull(toString(properties.changed_paths), '[]'), 'Array(String)') AS paths
+    FROM events
+    WHERE event = 'archive_change_observed'
+      AND timestamp >= now() - INTERVAL 7 DAY
+), totals AS (
+    SELECT endpoint_id, count() AS changes,
+           countIf(path_count = 1) / count() AS endpoint_sole_ratio,
+           countIf(truncated) / count() AS truncated_ratio
+    FROM observed GROUP BY endpoint_id
+), per_path AS (
+    SELECT endpoint_id, path, count() AS path_changes,
+           countIf(sole_path = path) AS sole_changes
+    FROM (SELECT endpoint_id, sole_path, arrayJoin(paths) AS path FROM observed)
+    GROUP BY endpoint_id, path
+)
+SELECT totals.endpoint_id, totals.changes, per_path.path,
+       per_path.path_changes / totals.changes AS path_ratio,
+       per_path.sole_changes / totals.changes AS sole_change_ratio,
+       totals.endpoint_sole_ratio, totals.truncated_ratio
+FROM totals LEFT JOIN per_path ON totals.endpoint_id = per_path.endpoint_id
+ORDER BY totals.changes DESC, path_ratio DESC, per_path.path
+```

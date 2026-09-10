@@ -218,15 +218,20 @@ class BodyPointer:
     snapshot_id: int | None = None
 
 
+def _r2_first(path: str) -> bool:
+    # Background change analysis follows the published location, including R2-only history.
+    return path == "observation" or getattr(get_settings(), "archive_body_read_" + path) == "r2-first"
+
+
 def read_options(path):
     from sqlalchemy.orm import defer
     from .models import ArchiveSnapshot
-    return (defer(ArchiveSnapshot.body),) if getattr(get_settings(), "archive_body_read_" + path) == "r2-first" else ()
+    return (defer(ArchiveSnapshot.body),) if _r2_first(path) else ()
 
 
 async def pointer(session, snapshot, path):
     """Capture metadata only for R2-first; DB fallback is loaded in a later short session."""
-    if getattr(get_settings(), "archive_body_read_" + path) == "r2-first":
+    if _r2_first(path):
         return BodyPointer(snapshot.content_hash, snapshot.body_storage, None, None, snapshot.id)
     from .archive import _snapshot_body
     body = await _snapshot_body(session, snapshot)
@@ -253,7 +258,7 @@ async def read(pointer: BodyPointer, path: str, *, diagnostics: dict | None = No
                                cache_r2_read_ms=elapsed)
         return body
 
-    if (getattr(get_settings(), f"archive_body_read_{path}") == "r2-first"
+    if (_r2_first(path)
             and pointer.storage in ("both", "r2")):
         started = time.monotonic()
         try:

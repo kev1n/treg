@@ -911,3 +911,19 @@ async def test_singleflight_shares_exhausted_retry_result(r2, monkeypatch):
     assert all(plan.storage == 'db' and plan.reason == 'rate_limited' for plan in plans)
     assert r2.put_calls == 2 and not archive_bodies._uploaded and not archive_bodies._inflight
     assert (await put()).storage == 'both' and r2.put_calls == 3
+
+
+async def test_change_observation_reads_r2_only_without_db_connection(clients, r2, monkeypatch):
+    monkeypatch.setattr(get_settings(), 'archive_body_write', 'r2')
+    monkeypatch.setattr(get_settings(), 'archive_mode', 'shadow')
+    events = []
+    monkeypatch.setattr(service.analytics, 'capture', lambda who, name, props, **kw: events.append((name, props)))
+    for body in (RAW, RAW.replace(b'hello', b'world')):
+        monkeypatch.setattr(service, 'relay', _fake_relay(200, body))
+        assert (await clients.get(URL)).content == body
+        await archive.drain()
+    rows = await snapshots()
+    assert all(row.body is None and row.body_storage == 'r2' for row in rows)
+    observed = [p for name, p in events if name == 'archive_change_observed']
+    assert len(observed) == 1
+    assert observed[0]['changed_paths'] == ['data.comments[*].text']
