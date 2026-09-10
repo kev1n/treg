@@ -1299,6 +1299,21 @@ ANYAPI_EXCLUDE_DEAD = frozenset({
     "instagram.followers", "instagram.following",
 })
 
+# PLATFORMS THE EXTENDED TIER LISTS. Every other platform's rows are dropped.
+#
+# The line is a measured break in AnyAPI's own 60-day production request volume, not a chosen
+# threshold: tiktok-shop, the last platform kept, took 5,121 requests, and the next platform down
+# (hackernews) took 1,567 - a 3.3x step. The 106 rows below that break carry 6,275 requests
+# BETWEEN THEM, and several took none at all: alibaba 13, douyin 97, zhihu 38. Listing an endpoint
+# nobody calls costs a reader attention and costs us a verify pass, so the tail is not listed.
+#
+# The first six are the same platforms anyapi.yaml curates in core; the last four are the next
+# busiest. Re-measure and re-run if the traffic shape changes.
+ANYAPI_KEEP_PLATFORMS = frozenset({
+    "tiktok", "linkedin", "facebook", "google", "x", "instagram",
+    "reddit", "youtube", "web", "tiktok-shop",
+})
+
 # Routing controls, not data inputs: they change which source serves and what it costs, never the
 # shape of the answer. Carrying them into every one of 300+ entries would bury the real parameters.
 ANYAPI_SKIP_PARAMS = {"preferLatencyUnderMs", "requireCursor", "requireSinglePage"}
@@ -1455,7 +1470,7 @@ def anyapi_price_basis(sku: str) -> str:
 
 
 def ingest_anyapi(refresh: bool = False):
-    """Every AnyAPI SKU except the ones curated in core and the ones AnyAPI excludes.
+    """Every AnyAPI SKU on a kept platform, except those curated in core and those AnyAPI excludes.
 
     Two sources, both the vendor's own: the OpenAPI document for request shapes (public, no key)
     and the rate card for prices (needs any AnyAPI key in `ANYAPI_API_KEY` — `POST
@@ -1484,6 +1499,8 @@ def ingest_anyapi(refresh: bool = False):
         example = content.get("example") or {}
         prefix = sku.split(".")[0]
         platform = ANYAPI_PLATFORM.get(prefix, prefix)
+        if platform not in ANYAPI_KEEP_PLATFORMS:
+            continue
         ep = {
             "id": f"anyapi.{sku}",
             "tier": "extended",
@@ -1516,8 +1533,9 @@ def ingest_anyapi(refresh: bool = False):
     source = {"method": "openapi + provider rate card", "ingested": ANYAPI_CHECKED,
               "spec_urls": [ANYAPI_OPENAPI, ANYAPI_RATE_CARD]}
     out = write_extended("anyapi", source, endpoints, [
-        "Every SKU AnyAPI publishes, minus the routes curated in anyapi.yaml and the SKUs AnyAPI",
-        "excludes from this listing (ANYAPI_EXCLUDE in scripts/catalog_ingest.py).",
+        "Every SKU AnyAPI publishes on its ten busiest platforms, minus the routes curated in",
+        "anyapi.yaml and the SKUs AnyAPI excludes from this listing (ANYAPI_KEEP_PLATFORMS and",
+        "ANYAPI_EXCLUDE in scripts/catalog_ingest.py).",
         "Prices are MEASURED: cost.value is the p90 of what AnyAPI actually billed for that SKU",
         "over the 60 days to the ingest date (scripts/data/anyapi_measured_charges.json), so it is",
         "what nine calls in ten settle at or below rather than the cheapest source's list price. A",

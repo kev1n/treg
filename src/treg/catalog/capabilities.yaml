@@ -123,26 +123,6 @@ platforms:
   crypto: {label: "Crypto Market Data", category: "Market data", featured: 1, summary: "Live and historical prices, market caps, trends and exchanges across 17,000+ coins."}
   stocks: {label: "Stock Market Data", category: "Market data", featured: 2, summary: "End-of-day and intraday stock prices, tickers, splits and dividends across global exchanges."}
 
-  # --- Added with the AnyAPI listing (2026-09-08): platforms the taxonomy had no slug for -------
-  hackernews: {label: "Hacker News", category: "Social", summary: "Stories, comments, user profiles and search from Hacker News."}
-  substack: {label: "Substack", category: "Social", summary: "Newsletter posts and archives from Substack."}
-  nextdoor: {label: "Nextdoor", category: "Social", summary: "Neighborhood business listings and search results from Nextdoor."}
-  indeed: {label: "Indeed", category: "Enrichment", summary: "Job listings and search results from Indeed."}
-  glassdoor: {label: "Glassdoor", category: "Enrichment", summary: "Job listings from Glassdoor."}
-  upwork: {label: "Upwork", category: "Enrichment", summary: "Freelance job listings and search results from Upwork."}
-  fiverr: {label: "Fiverr", category: "E-commerce", summary: "Gig listings and search results from Fiverr."}
-  alibaba: {label: "Alibaba.com", category: "E-commerce", summary: "Wholesale product listings and search from Alibaba.com."}
-  zillow: {label: "Zillow", category: "E-commerce", summary: "US property listings and search results from Zillow."}
-  redfin: {label: "Redfin", category: "E-commerce", summary: "US property listings and search results from Redfin."}
-  realtor: {label: "Realtor.com", category: "E-commerce", summary: "US property listings and search results from Realtor.com."}
-  airbnb: {label: "Airbnb", category: "E-commerce", summary: "Stay listings, prices and search results from Airbnb."}
-  booking: {label: "Booking.com", category: "E-commerce", summary: "Hotel listings, prices and search results from Booking.com."}
-  g2: {label: "G2", category: "Reviews & Apps", summary: "Software product profiles and reviews from G2."}
-  capterra: {label: "Capterra", category: "Reviews & Apps", summary: "Software product profiles and reviews from Capterra."}
-  sec: {label: "SEC EDGAR", category: "Market data", summary: "Company filings from the SEC's EDGAR system."}
-  congress: {label: "US Congress trading disclosures", category: "Market data", summary: "Stock trades disclosed by members of the US Congress."}
-  polymarket: {label: "Polymarket", category: "Market data", summary: "Prediction-market questions, prices and volumes from Polymarket."}
-
 capabilities:
   # --- AI generation ---------------------------------------------------------------------------
   # The four generation capabilities are DELIBERATELY memberless: generation models are not
