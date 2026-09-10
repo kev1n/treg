@@ -1316,6 +1316,33 @@ ANYAPI_CHECKED = "2026-09-09"
 ANYAPI_MEASURED_FILE = Path(__file__).parent / "data" / "anyapi_measured_charges.json"
 _ANYAPI_MEASURED: dict[str, dict] | None = None
 
+# CORE-TIER SHELF ROWS WHOSE SOURCES CHARGE DIFFERENT PRICES FOR THE SAME RESULT COUNT.
+#
+# For these the p90 measures lane spread, not work done, so it is not the price a buyer will pay.
+# maps.search, measured per source over the same 60 days: scrapertech $0.00175 flat (312 calls),
+# serper $0.00297 flat (743 calls), apify $0.06005 median (485 calls) - and all three average
+# 11-12 items per response. The p90 of the blend is $0.07734, which is only ever paid when the
+# dearest source serves; the cheapest source serves the same query for $0.00175. Listing $0.07734
+# on the price-sorted google.serp.maps shelf misrepresents the endpoint by a factor of 44.
+#
+# So these rows list the CHEAPEST ADVERTISED price instead - `pricing.from.maxUsd`, the cheapest
+# source's price at the input maximum - and keep `source: rate_card_api`, because that is what the
+# number now is. They UNDER-reserve by design: a rescue on a dearer source settles above the
+# listing, which domain/money/settlement.py:133-134 accepts and reports in reconcile, and
+# `reported_charge` (`costUsd`) is what actually settles either way.
+#
+# This applies ONLY to core rows on the comparison shelf. Extended rows are not shelf-ranked, so a
+# lower number there would be a smaller reserve with no upside. It also does NOT apply to a
+# single-source per-result row like linkedin.company_employees or linkedin.jobs, where the price at
+# the input maximum is HIGHER than the measured p90 and switching would raise the shelf price.
+ANYAPI_CORE_ROWS_PRICED_AT_CHEAPEST_SOURCE = {
+    "maps.search",
+    "maps.place",
+    "maps.reviews",
+    "twitter.profile",
+    "twitter.replies",
+}
+
 
 def _anyapi_measured() -> dict[str, dict]:
     global _ANYAPI_MEASURED
@@ -1358,7 +1385,9 @@ def _anyapi_cost(api: dict) -> dict:
     against a $0.03795 median real charge), far HIGH on a per-result SKU nobody calls at the input
     maximum (instagram.hashtag_analytics lists $0.0385 against a $0.00297 p90), and it drifts every
     time a source is quarantined and `pricing.from` recomputes. `maxUsd` is still the fallback for
-    a SKU with fewer than 5 charged calls in the window, where there is nothing to measure.
+    a SKU with fewer than 5 charged calls in the window, where there is nothing to measure,
+    and for the named ANYAPI_CORE_ROWS_PRICED_AT_CHEAPEST_SOURCE, where the p90 measures
+    which source won rather than how much work the call did.
 
     A p90 is deliberately NOT a ceiling. About one call in ten settles above the reserve, which
     domain/money/settlement.py already designs for: the charge may exceed the reserve, the ledger
@@ -1371,7 +1400,8 @@ def _anyapi_cost(api: dict) -> dict:
     `reported_charge` stays on every row either way: `costUsd` is the only number that knows which
     source served and how many rows came back, and it is what settles.
     """
-    measured = _anyapi_measured().get(api["id"])
+    measured = (None if api["id"] in ANYAPI_CORE_ROWS_PRICED_AT_CHEAPEST_SOURCE
+                else _anyapi_measured().get(api["id"]))
     return {
         "type": "per_success",
         "value": measured["p90_usd"] if measured else api["pricing"]["from"]["maxUsd"],
@@ -1390,6 +1420,10 @@ def anyapi_price_basis(sku: str) -> str:
 
     Core rows are hand-curated but priced by the same rule, so this is shared rather than copied.
     """
+    if sku in ANYAPI_CORE_ROWS_PRICED_AT_CHEAPEST_SOURCE:
+        return ("Price is the cheapest source's advertised price, because the sources that "
+                "serve this endpoint charge very different amounts for the same number of "
+                "results; a rescue on a dearer source settles above it.")
     m = _anyapi_measured().get(sku)
     if m:
         return ("Price is the p90 of what AnyAPI really charged for this endpoint over the 60 days "
