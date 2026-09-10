@@ -2482,3 +2482,14 @@ async def test_contactout_reveal_small_page_and_own_key_relay(clients, contactou
     reserves = [e for e in after["entries"]["items"] if e["kind"] == "reserve"]
     assert len(reserves) == (0 if own else 1)
     assert contactout.estimate(_contactout_cost("people.search.reveal"), {"reveal_info": True, "page_size": 1}) == 670000
+
+def test_email_path_keeps_at_sign_but_cannot_inject_path_or_query():
+    # Synthetic path-parameter endpoint: the current Tomba verifier uses a query.
+    ep = {**catalog_store.load().by_id['tomba.people.email.verify'], 'path':'/v1/email-verifier/{email}'}
+    url, consumed = call_resolution._marketplace_upstream(
+        ep, oauth_providers.TOMBA, {'email': 'person@example.com'})
+    assert url == 'https://api.tomba.io/v1/email-verifier/person@example.com'
+    assert consumed == {'email'}
+    url, _ = call_resolution._marketplace_upstream(
+        ep, oauth_providers.TOMBA, {'email': 'person@example.com/extra?x=1#fragment'})
+    assert url.endswith('person@example.com%2Fextra%3Fx%3D1%23fragment')

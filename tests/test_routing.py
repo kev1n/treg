@@ -87,7 +87,7 @@ def test_every_shipped_adapter_round_trips_its_fixture():
     ad = cat.adapters["leadsforge.people.email.find"]
     q, b = ad.to_upstream({"first_name": "Patrick", "last_name": "Collison", "domain": "stripe.com", "full_name": "Patrick Collison"})
     assert b == {"firstName": "Patrick", "lastName": "Collison", "companyDomain": "stripe.com"} and q == {}
-    assert ad.from_upstream({"email": "p@stripe.com", "status": "succeeded"}) == {"email": "p@stripe.com", "verified": True}
+    assert ad.from_upstream({"email": "p@stripe.com", "status": "succeeded"}) == {"email": "p@stripe.com"}
     assert ad.is_miss({"email": None}) and not ad.is_miss({"email": "x"})
 
 
@@ -1218,6 +1218,34 @@ async def test_strict_filters_refuses_a_looser_answer_instead_of_billing_it(clie
     assert "X-Treg-Ignored-Filters" not in r.headers and seen[0][2]["country"] == "Guatemala"
     get_settings.cache_clear()
 
+
+@pytest.mark.parametrize("capability", ["people.email.find", "people.phone.find"])
+def test_leadsforge_requires_both_name_parts_or_linkedin(capability):
+    from treg.domain.catalog.routing.contracts import adapter_accepts
+    cat = catalog_store.load()
+    adapter = cat.adapters["leadsforge." + capability]
+    contract = cat.contracts[capability]
+    incomplete, _ = canonical_identity(contract, {"full_name": "Jason", "domain": "example.com"})
+    assert adapter_accepts(adapter, incomplete) is None, "Do not send a company-only request"
+    complete, _ = canonical_identity(contract, {"full_name": "Test Person", "domain": "example.com"})
+    query, body = adapter.to_upstream(complete, adapter_accepts(adapter, complete))
+    assert query == {}
+    assert body == {"firstName": "Test", "lastName": "Person", "companyDomain": "example.com"}
+    linkedin, _ = canonical_identity(contract, {"linkedin_url": "https://www.linkedin.com/in/test-person"})
+    assert adapter.to_upstream(linkedin, adapter_accepts(adapter, linkedin))[1] == {
+        "linkedinURL": "https://www.linkedin.com/in/test-person"}
+
+
+def test_successful_contact_lookup_is_not_mailbox_verification():
+    cat = catalog_store.load()
+    for endpoint, response in [
+        ("leadsforge.people.email.find", {"email": "test@example.com", "status": "succeeded"}),
+        ("fiber-ai.people.contacts.reveal", {"output": {"profile": {
+            "success": True, "emails": [{"email": "test@example.com"}]}}}),
+    ]:
+        output = cat.adapters[endpoint].from_upstream(response)
+        assert output["email"] == "test@example.com"
+        assert "verified" not in output, "Successful enrichment is not a deliverability verdict"
 
 @pytest.mark.parametrize("result,valid,miss", [
     ("ok", True, False), ("invalid", False, False), ("disposable", False, False),

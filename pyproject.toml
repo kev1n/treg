@@ -1,6 +1,6 @@
 [project]
 name = "tools-registry"
-version = "0.18.0"
+version = "0.19.0"
 description = "A remote registry that turns team skills into shareable, callable tools via a credential-injecting proxy."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -38,7 +38,7 @@ server = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
     "sqlmodel>=0.0.22",
-    "sqlalchemy[asyncio]>=2.0",
+    "sqlalchemy[asyncio]>=2.0.42",
     "aiosqlite>=0.20",
     "asyncpg>=0.30",
     "cryptography>=43",
@@ -46,7 +46,9 @@ server = [
     "pyyaml>=6",   # the endpoint catalog's data files (src/treg/catalog/*.yaml) — server-side only
     "stripe>=12",  # balance top-ups (src/treg/infra/stripe.py) — the payment rail, server-side only
     "mcp>=2",      # the MCP front door (src/treg/mcp.py) — server-side only; pulls httpx2 ALONGSIDE
-                   # httpx (they coexist), so the light CLI's dependency set is untouched
+    # httpx (they coexist), so the light CLI's dependency set is untouched
+    "redis>=5",    # the shared key-value store (src/treg/infra/kv.py) — server-side only
+    "obstore>=0.11,<0.12",
 ]
 # The LOCAL PROXY (`treg shell` catching the agent's own outgoing calls). It needs to generate a
 # certificate authority on the machine, and `cryptography` is a compiled package — putting it in the
@@ -103,6 +105,7 @@ source_modules = [
     "treg.fsjail",
 ]
 forbidden_modules = [
+    "obstore",
     "aiosqlite",
     "alembic",
     "asyncpg",
@@ -112,6 +115,7 @@ forbidden_modules = [
     "pydantic",
     "pydantic_core",
     "pydantic_settings",
+    "redis",
     "sqlalchemy",
     "sqlmodel",
     "starlette",

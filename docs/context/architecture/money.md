@@ -26,6 +26,8 @@ sources:
   - src/treg/domain/referrals.py
   - src/treg/api.py
   - src/treg/application/signup.py
+  - src/treg/domain/identity/promotions.py
+  - src/treg/alembic/versions/0033_signup_promo_eligibility.py
   - src/treg/routers/admin.py
   - src/treg/routers/billing.py
   - src/treg/routers/call.py
@@ -71,6 +73,30 @@ providers is what the reserve takes, and a test walks the provider asserting the
 The money seam is one function: `ledger.topup(org, amount_micro, payment_ref)`. Billing orchestration
 asks the Stripe adapter to authorize or verify a payment, then asks the ledger to stage the credit
 and owns the commit that lands it; neither adapter reaches into the ledger.
+
+## Signup credit eligibility
+
+`application.signup._grant_signup_promo` calls `identity.promotions.claim_signup_promo` for the
+creating user's ID. A conditional UPDATE consumes `User.signup_promo_available` only for a verified,
+active, non-demo user. It commits in the same transaction as `ledger.grant(once=False)`, the block,
+balance and entry; failed commits roll everything back. Ledger metadata records `source=signup`
+and the claiming `user_id`. The ordinary per-org `grant(once=True)` check is not the concurrency
+arbiter and manual/referral grants retain their own semantics.
+
+`User.email_verified_at` is set only by successful OTP, verified social login or an inbox-only
+invitation link. Legacy `/users` and admin-visible invite codes do not prove email ownership. An
+unverified account may create teams with zero signup credit; after verifying it may claim once on
+a subsequently created eligible team. Existing teams are not automatically backfilled. The grant
+amount is `promo_grant_micro` (default 1,000,000); zero skips the claim as well as the credit.
+
+Revision `0033` defaults historical users and old writers to ineligible without scanning potentially
+deleted team ledgers. New application User rows explicitly start eligible. Verification never resets
+eligibility. Team deletion, leaving and ownership changes cannot restore it because it lives on the
+user. Administrative deletion of the user also deletes this marker; this is an account-level guarantee,
+not a permanent per-email denylist or proof that separate accounts belong to different humans.
+Existing balances and all five money operations are unchanged. During rollout or application rollback,
+keep automatic credit disabled until every serving instance enforces the new rule; old code still
+awards per team even after this additive migration.
 
 ## Units: integer micro-USD, everywhere
 
@@ -758,6 +784,16 @@ after a tier-4 balance/quota signature, and `_note_capacity_recovery` removes it
 resolution - and both are listed in the dataplane write allowlist on their own
 (`capacity_exhausted_mark`), not under the money entries. See `ops/capacity.md`.
 
+## Caller cost ceilings
+
+`MarketplaceCall.max_cost_micro` carries the caller's remaining ceiling. `_platform_reserve`
+checks the actual reservation estimate with margin before opening its transaction or creating a
+hold. Direct calls only set it when the caller supplies `X-Treg-Route-Max-Cost`; routed children
+always inherit their route's remaining ceiling, including its default. A refusal is a 402
+`route_max_cost` and moves no money for that attempt. Overflow inherits the same field via its
+child snapshot and checks its own estimate; a preceding direct charge reduces the remainder.
+This is a pre-reservation guard, not a rewrite of provider-reported settlement evidence.
+
 ## Overflow money
 
 The overflow child (`application.call.overflow`) is an ordinary metered cycle on its own hold
@@ -839,3 +875,13 @@ from returned profiles using the YAML Starter micro-USD rates. It reuses the exi
 Profile-only LinkedIn enrichment reserves and settles 20,000 micro-USD when a profile is found;
 misses remain free. Platform reveal search requires an explicit page size to bound its hold.
 Own keys are unmetered; see [ContactOut](contactout.md) for prices, free verification and evidence limits.
+
+## Top-up product attribution
+
+Manual checkout accepts optional product attribution independent of billing policy. `start_topup`
+and `create_topup_checkout` normalize `entry_surface` and `checkout_source` to fixed surface names.
+Both Stripe Session and PaymentIntent metadata carry them. `_credit` passes only those normalized
+values into the top-up ledger metadata and `topup_completed`, under the existing fresh-credit
+guard; webhook order and sequential redelivery do not change attribution or duplicate events.
+Missing/legacy attribution is `unknown`. No query inputs, URLs, API keys or provider results are
+copied into this metadata. Amounts, reservations, settlement and payment authorization are unchanged.

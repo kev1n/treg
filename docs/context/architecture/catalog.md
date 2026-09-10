@@ -23,6 +23,7 @@ sources:
   - src/treg/catalog/examples/millionverifier.people.email.verify.json
   - src/treg/catalog/examples/millionverifier.account.usage.json
   - src/treg/catalog/adapters.yaml
+  - tests/test_route_cost_ceiling.py
   - src/treg/catalog/tomba.yaml
   - src/treg/catalog/examples/tomba.people.email.verify.json
   - src/treg/catalog/examples/findymail.search.business-profile.json
@@ -111,6 +112,8 @@ related:
 
 # Endpoint catalog — platform-grouped operations per provider
 
+Sumble adds the full v9 surface with verified platform operations and explicit BYOK restrictions. See [Sumble](sumble.md) for schemas, pricing rules, routing and live evidence.
+
 The computed cost view uses a `cost.table` fallback as its scalar validated upper bound for
 eligibility and compact displays. Runtime charging evaluates the first matching row against request
 values plus catalog defaults and freezes that settlement basis. Terminal usage or the recorded table
@@ -131,6 +134,10 @@ satisfy a people-search request without a paid reveal. Domain search retains its
 page; its adapter quotes one credit without a title and up to 20 with a title, independently of
 `limit`. The router discloses unsupported filters, including the domain route's row limit.
 No company-enrichment, email-verification or lookup-utility adapter is added.
+The phone adapter retains `data.country_code` as the provider's reported country context (company
+metadata, not proof of the phone owner's location). `people.phone.verify` accepts optional ISO-2
+`country_code`, and Tomba forwards it for national-number parsing. International numbers need no
+country hint; the phone verification verdict still establishes format only, not identity or reachability.
 
 A free-plan key was supplied and verified against `https://app.quickenrich.io`; the alternative
 marketing hostname `api.quickenrich.io` is unnecessary. The authenticated Contact Finder probe
@@ -217,6 +224,13 @@ captures the returned verdict fields; the mapping remains `data.email.status` / 
 Historical failure-only samples do not establish coverage for the corrected request shape.
 
 ## Authorization metadata
+
+Tomba email verification uses `GET /v1/email-verifier?email=…`; its catalog input and routing
+adapter both send `email` in query parameters. A September 8, 2026 live comparison with the same
+address and credentials returned a valid verification response on this documented query route
+and HTTP 422 `params_invalid` on the former `/v1/email-verifier/{email}` path. The response
+mapping remains `data.email.status` / `data.email.score`. Historical failure-only samples do not
+establish coverage for the corrected request shape.
 
 An endpoint can declare `authorization_method`, ordered `authorization_methods`, method-specific
 `authorization_paths`, `required_scopes`, `required_resource`, and `token_type`. `_normalize`
@@ -1354,6 +1368,9 @@ Five rules worth keeping:
   failure but an aviato 404 (voice-ai-outbound's GT report). Only a 4xx is honoured — a
   `status: 200` block (tikhub) is agent documentation; the adapter's own `miss` predicate decides
   a 2xx. Note a `per_call` provider (companyenrich) still bills the request on its declared miss.
+  Aviato company enrichment also declares 404 as a miss after the 2026-09-08 Arena sweep
+  returned `Not Found` for microsoft.com; its company-enrich documentation identifies the
+  response as `Company Not Found Error`. Arena and routed calls use the same metadata.
 - **Below `MIN_SAMPLES` we publish the count and nothing else.** "100% from two calls" is noise
   dressed as evidence, and on a quiet endpoint a rate could expose one org's activity. The floor
   applies to **decided calls** (2xx + provider-fault failures), not total traffic: four caller 422s
@@ -1578,7 +1595,13 @@ to choose (`docs/CAPABILITY-ROUTING-PLAN.md`). Everything else in the catalog st
   2026-08-28: the endpoint's job is to find the thing, and misses on the per-success children are
   free); `X-Treg-Route-Waterfall: 0` stops at the first miss. Every attempt is settled at its real
   price and `X-Treg-Route-Max-Cost` (default $1) bounds the sum before each reserve (a candidate
-  that would breach it is `skipped`). Response: `{output, raw, _treg: {served_by, provider, tier,
+  that would breach it is `skipped`). Quota-row quotes scale with the requested row count, just
+  like per-result quotes. Each child also receives the remaining ceiling after actual earlier
+  charges; the shared reservation gate checks the resolved estimate including margin, even when
+  the advisory quote was too low or the child uses overflow. A budget refusal skips that candidate
+  without using the provider-error retry allowance; if every candidate is skipped, return 402
+  `route_max_cost`. A retained weak answer keeps its own outcome when later candidates are skipped.
+  Response: `{output, raw, _treg: {served_by, provider, tier,
   outcome, tried[], charged_micro}}`, `X-Treg-Served-By`, `X-Treg-Providers-Tried`,
   `X-Treg-Route-Outcome`, `X-Treg-Cost-Micro` = the sum, one `X-Treg-Call-Id`. The parent owns
   the idempotency label (a success, or a terminal failure after a paid child, replays without
@@ -1719,6 +1742,16 @@ to choose (`docs/CAPABILITY-ROUTING-PLAN.md`). Everything else in the catalog st
   `kind: filters` / `Location` layer for the DSL/SQL providers (aviato dsl and pdl sql ride `obj`/
   `fmt` today; crustdata/diffbot/coresignal/apollo do not); own-key-dry → treg-key fallback.
 
+- **Name-only Leadsforge requests (2026-09-07)**: email and phone adapters accept the derived
+  `{first_name, last_name, domain}` variant or a LinkedIn URL. Removed the redundant
+  `{full_name, domain}` fallback: a one-word name cannot derive `last_name`, so that fallback
+  selected an identity variant whose name was not mapped and sent only `companyDomain`.
+  Complete full names still derive both parts and work normally. Regression tests exercise the
+  actual matched-variant request, including rejection of mononyms and preservation of LinkedIn.
+  Arena also validates full names before quoting, preventing Hunter's `invalid_full_name` error.
+  Leadsforge and Fiber contact lookup success flags no longer populate `verified`: neither
+  flag is an explicit mailbox deliverability verdict. The field remains absent when unknown.
+
 ## Security
 
 PII IS THE HARD RULE. This repo is public, and every captured example ships in it. Three checks
@@ -1792,3 +1825,29 @@ People lookup/search entries are `untestable:` without test requests or stored e
 PII rule. Their routing adapters are omitted; company search/enrichment and email verification
 retain verified adapters. Profile-only LinkedIn enrichment costs $0.02 when found.
 See [ContactOut](contactout.md) for request limitations, derived settlement and live evidence.
+
+`Catalog.cost_view` reads optional provider-neutral `cost.display` metadata. `unit` names the
+shown unit; `grouped` displays the price for `cost.per` units; `round_up` labels a started block;
+`variable` adds a plus sign for selected additions. It returns computed display USD/unit/suffix
+fields without changing `usd` or settlement. The CLI and web formatters consume those fields.
+The validator checks flags and requires grouped prices to declare a positive integer `per`.
+Sumble keeps its billing rules in the existing provider-module pattern, separate from display rules.
+
+
+### Similar-company routing
+
+The `companies.similar` contract accepts a seed `domain` and returns a nonempty `companies` list.
+Tomba and CompanyEnrich adapters are checked against their existing saved catalog fixtures.
+Tomba maps the domain to its query parameter and returns `data`; CompanyEnrich maps it to a
+one-item `body.domains` list, fixes page to one and pageSize to ten, and returns `items`.
+CompanyEnrich pricing therefore uses the explicit ten-row request. The contract has no common
+limit filter because Tomba's endpoint does not accept one. The ordinary verified-adapter gate
+controls synthesized routing availability; Arena additionally bounds its displayed rows.
+
+### Phone validation adapter
+
+The `people.phone.verify` contract maps Tomba's existing GET `/v1/phone-validator` endpoint
+through `queryParams.phone`. The adapter reads `data.valid`, `data.e164_format`, country code,
+line type and carrier. A boolean false is a returned invalid verdict; a missing verdict is a
+miss. This validates numbering-plan/format details, not line activity or subscriber ownership.
+The single verified adapter is usable by Arena; the two-provider public routing gate stays intact.

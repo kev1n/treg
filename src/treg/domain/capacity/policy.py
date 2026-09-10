@@ -32,6 +32,7 @@ _KNOWN: dict[str, tuple[str, str, str]] = {
     "tomba": ("monthly_quota", "quota_reset", "api"),
     "hunter": ("monthly_quota", "quota_reset", "api"),
     "quickenrich": ("monthly_quota", "quota_reset", "api"),
+    "sumble": ("monthly_quota", "quota_reset", "api"),
     "predictleads": ("monthly_quota", "quota_reset", "api"),
     "companyenrich": ("credits", "manual", "api"),
     "apollo": ("credits", "manual", "api"),
@@ -62,6 +63,7 @@ _QUOTAS: dict[str, dict] = {
     "quickenrich": {"limit": None, "period": "billing", "resets_at_rule": "subscription renewal; no reset timestamp in API"},
 }
 _RATE_LIMITS: dict[str, dict] = {
+    "sumble": {"limit": 10, "window_s": 1, "source": "docs"},
     "leadsforge": {"limit": 120, "window_s": 60, "source": "headers"},
     "leadmagic": {"limit": 300, "window_s": 60, "source": "docs"},
     "crustdata": {"limit": 30, "window_s": 60, "source": "headers"},

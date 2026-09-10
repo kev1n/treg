@@ -9,6 +9,8 @@ from sqlmodel import select
 from ... import crypto
 from ...models import (
     AdConversion,
+    ArenaEvaluation,
+    ArenaRun,
     AsyncResourceRecord,
     AsyncTaskRecord,
     Bundle,
@@ -130,6 +132,7 @@ async def list_user_orgs(
 # Order matters: LedgerEntry references a CreditBlock, so it goes first; `IdempotentCall.membership_id`
 # points at Membership, so Membership stays last and IdempotentCall sits above it.
 ORG_SCOPED_MODELS = (
+    ArenaEvaluation, ArenaRun,
     Tool, Secret, Bundle, PendingOAuth, CallRecord, RunRecord, Invite, DenyRule, Project,
     CapabilityPin,
     TagBudget,

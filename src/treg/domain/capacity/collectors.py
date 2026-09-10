@@ -76,6 +76,19 @@ async def _seranking(c, key):
                     f"{sub.get('expire_at', '?')}); access via {reason}"}
 
 
+async def _sumble(c, key):
+    r = await c.post("https://api.sumble.com/v9/technologies/find",
+                     headers={"Authorization": f"Bearer {key}"},
+                     json={"query": "treg-nonexistent-probe-20260909"})
+    r.raise_for_status()
+    doc = r.json()
+    remaining = doc.get("credits_remaining") if isinstance(doc, dict) else None
+    if type(remaining) is not int or remaining < 0:
+        remaining = None
+    return {"value": remaining, "unit": "credits",
+            "note": "Monthly allowance plus purchased credits; renewal date and auto-top-up state not reported."}
+
+
 async def _quickenrich(c, key):
     # Free discovery carries the remaining subscription allowance; no account endpoint exists.
     r = await c.post("https://app.quickenrich.io/api/employees/contact-finder",
@@ -436,6 +449,7 @@ BALANCE_ROUTES = {
     "seranking": _seranking,
     "hunter": _hunter,
     "quickenrich": _quickenrich,
+    "sumble": _sumble,
     "trykitt": _trykitt,
     "contactout": _contactout,
     "millionverifier": _millionverifier,

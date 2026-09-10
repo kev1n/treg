@@ -131,7 +131,10 @@ async def catalog_platform(slug: str, include_hidden: int = 0) -> dict:
         # every row — an expanded endpoint needs them and shouldn't cost a second request.
         "providers": {
             service: {"service": service, "display_name": _provider_display(service),
-                      **cat.provider_meta.get(service, {})}
+                      **cat.provider_meta.get(service, {}),
+                      "auth_kind": getattr(oauth_providers.get(service), "auth_kind", None),
+                      "metered": bool(getattr(oauth_providers.get(service), "platform_billed", False)
+                                      and service in get_settings().oauth_billed_set)}
             for service in sorted({ep["provider"] for ep in eps})
         },
     }

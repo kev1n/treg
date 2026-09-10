@@ -22,6 +22,7 @@ sources:
   - src/treg/domain/governance/publicdemo.py
   - src/treg/domain/governance/usage.py
   - src/treg/routers/call.py
+  - tests/test_ssrf_public_addresses.py
   - tests/test_call_application_contract.py
   - tests/test_call_cancellation.py
   - tests/test_error_capture.py
@@ -186,9 +187,12 @@ near-id matching remains provider-local and takes precedence for genuine misspel
 
 If both shapes miss with 404, a dotted target gets one final lookup in the endpoint catalog. A live
 row enters `_resolve_marketplace_call` and its credential ladder. `_marketplace_upstream` fills catalog
-path placeholders by percent-encoding raw values, but preserves a value containing a valid `%HH` escape;
-this prevents an already encoded Search Console property id such as `sc-domain%3Aexample.com` becoming
-double-encoded as `%253A`. Literal/invalid percent signs remain encoded. A `retired`/`broken` tombstone is
+path placeholders by percent-encoding raw values, but preserves a value containing a valid `%HH`
+escape. This prevents an already encoded Search Console property id such as
+`sc-domain%3Aexample.com` becoming double-encoded as `%253A`. Raw `@` remains literal because it is
+a legal path-segment character. This also supports email-path APIs such as Tomba's verifier, which
+rejects `%40` before decoding. Slashes, query/fragment delimiters and invalid percent signs remain
+escaped; URL-passthrough bytes are unchanged. A `retired`/`broken` tombstone is
 instead refused with 410, its `status_note`, and its optional `superseded_by`, before credentials are
 selected or the relay can run; the refusal is audited as `refused_by=retired`. This ordering is
 deliberate: an org's own tool named exactly like the old catalog id already resolved above and is not
@@ -238,6 +242,16 @@ After credential refresh and relay, `_audit` records the attempt and mirrors it 
 `_tool_called_props` / `analytics.capture`. Provider identity is the catalog provider or the
 own tool's upstream host. Analytics includes outcome, status, timing, cost, call reference,
 capacity/cache/smoothing signals and user-agent attribution, never params or bodies.
+
+`domain.catalog.results.classify` shares verified hit/miss rules between business-hit telemetry
+and cache admission. Found means `hit=true`, explicit empty means false, and errors/unknown
+results mean null. Hunter company emails, LeadMagic employee finder, and SE Ranking keyword
+volume have additional field checks; other verified adapters retain their miss expressions.
+Only endpoints with enabled hit/miss rules adopt result-aware cache behavior; unconfigured or
+unverified endpoints keep original cache learning and serving. Classification inspects only
+already-buffered bodies and does not change relay bytes or settlement. Existing `tool_called`
+events expose `result_state`, `result_reason`, `cache_admission` and `cache_result_policy`.
+See [archive result admission](archive.md#result-admission).
 
 Overflow retains both attempt rows under the same call reference, but emits one product event for
 the final answer. `defer_analytics` holds the parent's event until the child succeeds or the
@@ -291,6 +305,12 @@ that resolves differently later. Registration itself (`infra.upstream.ssrf.safe_
 by `health` and reused for `base_url`)
 also rejects numeric IP encodings - decimal/hex/octal/short forms like `2130706433` / `0x7f000001` /
 `127.1` are normalized via `inet_aton` and re-checked, so they can't sneak past the literal-IP block.
+Targets must be globally routable unicast addresses. CGNAT `100.64.0.0/10` is internal
+service space: Tailscale, WireGuard overlay deployments, Fly.io, some Kubernetes pod CIDRs,
+and Alibaba Cloud's metadata endpoint `100.100.100.200` use addresses in this range. These are
+precisely the services a caller-controlled upstream must not reach. NAT64 translation prefixes
+mapping non-global IPv4 addresses do not make those targets public; `64:ff9b::/96` remains blocked.
+
 (A narrow resolve-vs-connect race remains; pinning the resolved IP would need a custom transport.)
 
 > Why relay instead of modeling the upstream: [foundation/charter.md](../foundation/charter.md).

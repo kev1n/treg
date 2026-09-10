@@ -14,8 +14,8 @@ Everything else in this file is guidance; these are the contract, and they win o
 1. A team's own key always wins over treg's, is never metered, and is never routed or overflowed.
 2. A hold (the balance `reserve` sets aside for one call) is settled or released exactly once, on
    every path: timeout, cancellation and exceptions included.
-3. Zero database connections are held while an upstream request is in flight. This is why
-   `reserve` and `settle` are two transactions; never merge them.
+3. A request holds zero database connections while upstream or object-storage I/O is in flight.
+   Keep `reserve` and `settle` separate; read archive pointers, close the session, then fetch bytes.
 4. Plain `/call/` is a faithful relay: the injected credential, the transport headers listed in
    `src/treg/infra/upstream/relay.py`, and (on treg's shared key only) the per-org re-scoping of the
    caller's `Idempotency-Key` are the only rewrites. Never add upstream-specific modeling or body
@@ -57,7 +57,7 @@ agents then built against a constitution that was wrong.
 | `routers/` | HTTP and MCP translation in, response shape out | business rules, query orchestration, money |
 | `application/` | use-case sequencing, transaction boundaries, compensation, cross-domain composition | empty wrappers around one-domain CRUD |
 | `domain/` | rules explainable and testable alone: `identity`, `governance`, `connections`, `tools`, `catalog`, `capacity`, `money`, `asynctasks`, `feedback` | routers, application, concrete SDKs |
-| `infra/` | DB engine and sessions, crypto, upstream relay and SSRF, ratestore, email, Stripe | decisions |
+| `infra/` | DB engine and sessions, crypto, upstream relay and SSRF, ratestore, the shared key-value store, email, Stripe | decisions |
 
 - Domains do not import each other, with three sanctioned edges: `governance -> identity`,
   `tools -> connections`, `capacity -> catalog` (read-only). `identity` and `money` are leaves.
@@ -78,12 +78,17 @@ agents then built against a constitution that was wrong.
   exceptions: only money writes `org.balance_micro`, the daily-spend counter (`spent_today_*`) and
   the auto-top-up fields; the call runtime may persist an OAuth token refresh into `secret`; audit
   writes `callrecord`, domains only read it.
+- **Feedback handling.** This repo owns `FeedbackHandling` and `FeedbackHandlingEvent` models and
+  migrations; the private admin service is their only runtime writer. Original reports remain
+  owned by the feedback domain. See `docs/context/architecture/feedback.md`.
 - **The call runtime is self-contained.** `src/treg/application/call/` depends on no management
   code (routes, login, OAuth consent, Stripe top-up), reads only membership, deny rules,
   credentials, catalog prices and balances, and writes only what `tests/test_call_architecture.py`
   allowlists (the ledger entries, idempotency claims, OAuth refresh, audit and telemetry, first-call
   markers, tag budgets, capacity marks, overflow spend, the member's daily-cap slot). Extend the
   test's allowlist in the same PR as any new write, and expect the reviewer to ask why.
+- **Signup credit.** Once per new verified user, enforced by a user-level atomic claim committed
+  with the grant. Team deletion never restores eligibility; legacy registration is not email proof.
 - **Money.** Everything is **integer micro-USD** - never floats, never cents. The Stripe SDK lives
   only in `infra/stripe.py`, orchestration in `application/billing.py`, and `reconcile.py` is
   read-only. See `docs/context/architecture/money.md`.

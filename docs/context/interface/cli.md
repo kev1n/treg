@@ -30,8 +30,9 @@ failures report an unconfirmed outcome, not a definite failure. Bare `treg feedb
 `cmd_review` implements `treg review <call_id> <usefulness> [--reason TEXT]`, sharing the light
 contract's enum and description with MCP. It validates the reference and trimmed reason locally,
 posts to `/reviews`, prints a receipt, and emits structured errors without echoing rejected input.
-A transport failure explicitly leaves the outcome unconfirmed. `_show_review_line`, beside the
-charge line, prints the sampled `X-Treg-Review: requested` invitation only on stderr. Call responses
+A transport failure explicitly leaves the outcome unconfirmed. `_show_hint_line`, beside the
+charge line, prints the server's invitation (`X-Treg-Hint: review|feedback`; the older
+`X-Treg-Review: requested` still means review) as one stderr line per kind. Call responses
 retain the existing `_show` formatting on stdout, including pretty-printed JSON.
 
 ## Instagram grants
@@ -525,3 +526,10 @@ alias. Self-hosted URLs send nothing unless `TREG_CLI_POSTHOG_KEY` is set; the h
 all analytics and ID creation. SDK import and synchronous capture run in a daemon thread with
 no retries, a 0.2-second request timeout and a 1-second caller wait budget. Slow delivery may
 be dropped at exit; telemetry failures are silent and preserve command output and exit status.
+
+## Catalog price display
+
+`_cost_label` and `_cost_usd` consume the same computed display USD/unit/suffix fields as the web
+pages. Grouped prices show the full block amount, and variable prices show a plus sign. The source
+is provider-neutral `cost.display` catalog metadata. Missing metadata retains the existing format.
+CLI call billing still uses the shared server call path.

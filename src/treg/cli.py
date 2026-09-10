@@ -289,7 +289,7 @@ def _show(resp: httpx.Response) -> None:
         print(resp.text)
     if resp.status_code < 400:
         _show_charge_line(resp)
-        _show_review_line(resp)
+        _show_hint_line(resp)
     if resp.status_code >= 400:
         _show_failure_diagnostics(resp)
         # 402 = the team balance can't cover a call on treg's key. The JSON above already carries the
@@ -326,13 +326,26 @@ def _show_charge_line(resp: httpx.Response) -> None:
     print(line, file=sys.stderr)
 
 
-def _show_review_line(resp: httpx.Response) -> None:
+def _show_hint_line(resp: httpx.Response) -> None:
+    """The server's optional invitation (`X-Treg-Hint: review|feedback`), one stderr line beside the
+    charge line. `X-Treg-Review: requested` is the older review-only header a pre-0.19 registry
+    still sends. stdout stays the exact body."""
     headers = getattr(resp, "headers", {}) or {}
     call_id = headers.get("X-Treg-Call-Id")
-    if headers.get("X-Treg-Review") == "requested" and call_id:
+    kind = headers.get("X-Treg-Hint")
+    if kind is None and headers.get("X-Treg-Review") == "requested":
+        kind = "review"
+    if not call_id:
+        return
+    if kind == "review":
         print(f'treg: after using this result, run treg review {call_id} '
               '<useful|partly|not_useful|not_sure> [--reason "..."]; '
               'omit private data, then keep going with the task.', file=sys.stderr)
+    elif kind == "feedback":
+        print('treg: anything confusing or wrong about this call, even if it worked? '
+              'treg feedback submit <quality|pricing|friction|other> "what you saw" '
+              f'--call-id {call_id}; omit private data, then keep going with the task.',
+              file=sys.stderr)
 
 
 def _show_failure_diagnostics(resp: httpx.Response) -> None:
@@ -2441,7 +2454,7 @@ def _show_call_response(response: httpx.Response) -> None:
             _show_failure_diagnostics(response)
             raise SystemExit(1)
         _show_charge_line(response)
-        _show_review_line(response)
+        _show_hint_line(response)
         return
     _show(response)
 
@@ -4660,6 +4673,9 @@ def _cost_label(cost) -> str:
     """A price you can scan in a column: "$0.001/success", "free", "quota rows"."""
     if not isinstance(cost, dict):
         return "-"
+    if cost.get("display_unit") and cost.get("display_usd") is not None:
+        return (f"${cost['display_usd']:.3g}" + cost.get("display_suffix", "")
+                + "/" + cost["display_unit"])
     kind = (cost.get("type") or "").replace("_", " ")
     value, currency = cost.get("value"), cost.get("currency") or ""
     if value in (None, "") and isinstance(cost.get("table"), list):
@@ -4881,6 +4897,9 @@ def _cost_usd(cost: dict | None) -> str:
     column, so USD stands alone here; `treg catalog get` carries the native amount alongside it."""
     if not isinstance(cost, dict):
         return "-"
+    if cost.get("display_unit") and cost.get("display_usd") is not None:
+        return (f"${cost['display_usd']:.3g}" + cost.get("display_suffix", "")
+                + "/" + cost["display_unit"])
     usd = cost.get("usd")
     if usd is None:
         # no rate for this unit (a provider that publishes no per-credit price): the native

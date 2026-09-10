@@ -8,6 +8,7 @@ The `clients` fixture also registers a user and authes the client by default.
 from __future__ import annotations
 
 import os
+import socket
 import tempfile
 
 # Tests and their CLI subprocesses must never emit production analytics.
@@ -46,12 +47,13 @@ for _k in (
     "X_CLIENT_ID", "X_CLIENT_SECRET", "SLACK_CLIENT_ID", "SLACK_CLIENT_SECRET",
     "TIKTOK_CLIENT_KEY", "TIKTOK_CLIENT_SECRET",
     "META_CLIENT_ID", "META_CLIENT_SECRET",
+    "POSTHOG_KEY", "ADS_CONV_REFRESH_TOKEN",
     "INSTAGRAM_CLIENT_ID", "INSTAGRAM_CLIENT_SECRET",
     # …and the tier-4 platform keys + their allow-list. A developer's .env carries real, FUNDED keys:
     # without this a suite run on their laptop could resolve tier 4 and spend actual money on the
     # in-process upstream's echo. Tests that exercise tier 4 set both halves via monkeypatch.
     "PLATFORM_KEY_TRYKITT", "PLATFORM_PROVIDERS", "PLATFORM_KEY_TIKHUB", "PLATFORM_KEY_DATAFORSEO", "PLATFORM_KEY_SCRAPECREATORS",
-    "PLATFORM_KEY_QUICKENRICH",
+    "PLATFORM_KEY_QUICKENRICH", "PLATFORM_KEY_SUMBLE",
 ):
     os.environ[f"TREG_{_k}"] = ""  # the test upstream is an in-process ASGI transport, not real DNS
 
@@ -70,6 +72,31 @@ from treg.infra.db import reset_db  # noqa: E402
 # The OTP-start + sandbox throttles (and the OTP codes) now live in the DB's `ephemeral` table, not in
 # process-global dicts — so `reset_db()` (called by every client fixture) already clears them between
 # tests. No separate rate-limit reset fixture is needed.
+
+
+@pytest.fixture
+def fake_getaddrinfo(monkeypatch):
+    """Override named hosts only, leaving DB and other infrastructure DNS untouched.
+
+    An empty address list models an unresolvable host without querying external DNS.
+    """
+    original = socket.getaddrinfo
+
+    def install(addresses: dict[str, list[str]]) -> None:
+        def resolve(host, port, *args, **kwargs):
+            if host not in addresses:
+                return original(host, port, *args, **kwargs)
+            if not addresses[host]:
+                raise socket.gaierror(socket.EAI_NONAME, "unresolvable")
+            return [
+                (socket.AF_INET6 if ":" in address else socket.AF_INET,
+                 socket.SOCK_STREAM, 0, "",
+                 (address, port or 0, 0, 0) if ":" in address else (address, port or 0))
+                for address in addresses[host]
+            ]
+        monkeypatch.setattr(socket, "getaddrinfo", resolve)
+
+    return install
 
 
 def make_upstream(hook_hits: list | None = None) -> FastAPI:
@@ -284,6 +311,50 @@ def make_upstream(hook_hits: list | None = None) -> FastAPI:
     return up
 
 
+async def verified_identity(client, email):
+    """Real OTP proof, capturing mail delivery even when Postgres hides dev codes."""
+    from unittest.mock import patch
+    import httpx
+    from treg import email as email_sender
+
+    delivered = {}
+
+    async def receive(email, code, **kwargs):
+        delivered[email] = code
+
+    previous_cookies = httpx.Cookies(client.cookies)
+    try:
+        with patch.object(email_sender, "send_otp", receive):
+            started = await client.post("/auth/email/start", json={"email": email})
+        assert started.status_code == 200, started.text
+        code = started.json().get("dev_code") or delivered[email]
+        proof = await client.post("/auth/email/verify", json={"email": email, "code": code})
+        assert proof.status_code == 200, proof.text
+        return proof.json()["token"]
+    finally:
+        client.cookies = previous_cookies
+
+
+async def verified_signup(client, *, json, headers=None):
+    """Funded test identity through OTP and team creation, with fixture identity fields."""
+    import httpx
+    from sqlmodel import select
+    from treg.infra.db import session_maker
+    from treg.models import User
+
+    email = json["email"]
+    token = await verified_identity(client, email)
+    response = await client.post("/orgs", json={"name": email},
+        headers={**(headers or {}), "X-Treg-Token": token})
+    if response.status_code != 200:
+        return response
+    async with session_maker() as db:
+        user = (await db.execute(select(User).where(User.email == email))).scalar_one()
+        user_id = user.id
+    return httpx.Response(response.status_code,
+        json={**response.json(), "id": user_id, "email": email}, request=response.request)
+
+
 @pytest.fixture
 async def clients():
     # Postgres needs a session-scoped event loop so asyncpg can safely pool connections. That also
@@ -305,7 +376,7 @@ async def clients():
     app.state.http = AsyncClient(transport=ASGITransport(app=make_upstream(app.state.hook_hits)), base_url="http://upstream")
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://registry") as c:
-            r = await c.post("/users", json={"email": "tim@superdesign.dev"})  # open registration
+            r = await verified_signup(c, json={"email": "tim@superdesign.dev"})
             assert r.status_code == 200, r.text
             c.headers["X-Treg-Token"] = r.json()["token"]  # authed by default from here on
             yield c
@@ -340,6 +411,10 @@ def _reset_call_path_caches():
             limiter.reset()
         except ImportError:
             pass
+        # The shared store's in-process fallback (the review-invitation budget): org ids restart
+        # with every reset_db(), so a counter left over would ration the NEXT test's team.
+        from treg.infra import kv
+        kv._store = None
     _clear()
     yield
     _clear()

@@ -24,9 +24,8 @@ HINT = (
 
 def review_hint(call_id: str) -> str:
     return (
-        f"After you have used this result, rate it: review(call_id={call_id}, "
-        "usefulness=useful|partly|not_useful|not_sure, reason?). "
-        "Only this call needs a review: one per invitation. "
-        "Anything confusing or wrong: use feedback with this call_id in call_ids. "
-        "No private data. Then keep going with the task."
+        f"Rate this one call after using it: review(call_id={call_id}, "
+        "usefulness=useful|partly|not_useful|not_sure, reason?); one review per invitation. "
+        "Anything confusing or wrong: feedback with this call_id in call_ids. "
+        "No private data. Then continue."
     )

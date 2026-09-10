@@ -200,8 +200,11 @@ validated before resolving the shared HTTP client. `/auth/logout` remains an HTT
 
 ## Endpoints
 
-- **Users / orgs:** `register_user` (`POST /users`, open, legacy - used by the test fixture) creates the
-  user + an org + owner membership and returns a token **once**; the dashboard/CLI login doors do NOT go
+- **Users / orgs:** `register_user` (`POST /users`, open, legacy, unverified) creates the
+  user + an org + owner membership with **zero signup credit** and returns a token **once**.
+  Email OTP, Google/GitHub or an inbox-only invite link establishes verification. A new verified
+  account can claim credit once when creating an eligible team; old accounts cannot reclaim it.
+  The dashboard/CLI login doors do NOT go
   through it (they create the user only, no auto org). Both this door and `create_org` read the
   first-party `treg_ad` cookie (`_ad_attribution_from`) and, when conversion tracking is enabled,
   stamp `Org.ad_gclid`/`ad_click_id_type`/`ad_landing`/`ad_click_at` on the new org when present - see
@@ -773,12 +776,14 @@ The response has no id because Starlette owns it, but treg records the row and o
 the handler returns its `StreamingResponse`, are not covered by that compensation path.
 
 A direct metered `/call/` honours **`X-Treg-Route-Max-Cost: <usd>`** as a hard per-call ceiling
-(`service._enforce_caller_max_cost`, 2026-09-05): when the reserve with margin would exceed it the
+(`service._set_caller_max_cost` and `reserve._platform_reserve`): when the reserve with margin would exceed it the
 call is refused **402** `error: route_max_cost` (`max_cost_micro`, `estimated_cost_micro`, no charge,
 audited `refused_by=balance` like every 402) — the same header and body shape the routed path uses,
 so one agent-side handler covers both. Unlike `/do/` there is NO default on a direct call: a caller
 who named the endpoint and page size is uncapped unless they send the header. A non-numeric value is
-a 400. Asked for by a customer whose runner approved $0.23 and was billed $0.56 (2026-09-04).
+a 400. Routed children receive the unspent part of the route ceiling, including the default ceiling;
+this same reservation check also applies to overflow at its own price. Refusing a child cannot
+undo earlier paid attempts. Asked for by a customer whose runner approved $0.23 and was billed $0.56 (2026-09-04).
 
 Metered responses also carry `X-Treg-Cost-Micro`; a reserved call that fails before a provider answer
 carries an explicit `0`. That `0` is what the call ends up costing, but the **balance can lag it**:
@@ -841,3 +846,12 @@ make a team. A failed grant recovers by rolling the session back, which expires 
 tracks - so both doors read their response fields *before* granting, and the redemption revives an
 expired `user`/`org` with `db.refresh` before touching them. The recovery path costs the team its
 credit, never the signup response or the referral attribution.
+
+## Optional checkout attribution
+
+`POST /billing/topup` also accepts `checkout_source` alongside `amount_usd`. The dashboard sends
+`arena` for an Arena credit-link arrival and `app` otherwise. The server separately reads the
+first-observed `treg_entry_surface` cookie; both values are normalized to the fixed product-surface
+allowlist (missing or invalid is `unknown`). They travel through Stripe metadata to payment
+analytics and ledger provenance only, never affecting the charged amount or authorization.
+Email OTP and OAuth callbacks read the same cookie for new-account signup analytics after commit.

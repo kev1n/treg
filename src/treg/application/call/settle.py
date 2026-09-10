@@ -241,6 +241,12 @@ def _observed_cost_micro(mk: MarketplaceCall, body: bytes, headers=None) -> int 
             except (InvalidOperation, ValueError, OverflowError):
                 pass
         # Missing or invalid charge evidence leaves the normal miss/base rules in force.
+    if provider == "sumble":
+        credits = doc.get("credits_used")
+        # The request-time unit freezes the credit rate, including legitimate zero usage.
+        if type(credits) is int and credits >= 0:
+            return credits * mk.unit_micro
+        return None
     if provider == "quickenrich":
         return _quickenrich_cost_micro(mk, doc)
     if provider == "aviato" and mk.endpoint_id == "aviato.companies.enrich.bulk":

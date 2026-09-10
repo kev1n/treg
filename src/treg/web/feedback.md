@@ -65,7 +65,9 @@ anything confusing or wrong. Keep going with your task after rating.
 Phase 1 invites only direct catalog calls served on treg's own platform key. Routed and own-key
 catalog calls can still be reviewed uninvited.
 
-CLI invitations appear on stderr; plain HTTP invitations use `X-Treg-Review: requested`.
+CLI invitations appear on stderr; plain HTTP invitations use `X-Treg-Hint: review` (with
+`X-Treg-Review: requested` alongside for older clients). A sampled `X-Treg-Hint: feedback` is a
+lighter nudge to report friction and asks for nothing.
 MCP invitations appear in the call result's hint. Use the call ID in the response:
 
 ```bash

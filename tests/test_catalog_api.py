@@ -1237,3 +1237,20 @@ async def test_enrichment_catalog_prices_and_routed_child_rates(clients):
         for child in children:
             ep = cat.by_id[child['endpoint_id']]
             assert child['usd'] == cat.cost_view(ep['cost'], ep['provider'])['usd']
+
+
+def test_generic_display_prices_match_web_and_cli():
+    from treg.domain.catalog import store
+    from treg.routers.web import _price_label
+    from treg.cli import _cost_usd, _cost_label
+    cat = store.load()
+    for quantity, rate in [(25, 2.0), (100, 1.0)]:
+        raw = {'type': 'per_result', 'currency': 'USD', 'value': rate, 'per': quantity,
+               'display': {'unit': 'records', 'grouped': True, 'round_up': True}}
+        cost = cat.cost_view(raw, 'any-provider')
+        expected = f'${rate:g}/started {quantity} records'
+        assert cost['usd'] == rate / quantity
+        assert _price_label(cost) == _cost_usd(cost) == _cost_label(cost) == expected
+    cost = cat.cost_view({'type': 'per_result', 'currency': 'USD', 'value': 2,
+                         'display': {'unit': 'item', 'variable': True}}, 'another-provider')
+    assert _price_label(cost) == _cost_usd(cost) == _cost_label(cost) == '$2+/item'
