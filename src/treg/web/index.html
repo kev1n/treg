@@ -149,6 +149,14 @@ addEventListener('load', function(){
   .mk-tabs button:hover{color:var(--ink)}
   .mk-tabs button.on{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
   .mk-tabs button span{color:var(--muted);font-size:11px;margin-left:5px}
+  .catalog-arena-banner{display:flex;align-items:center;flex-wrap:wrap;gap:12px 20px;margin:0 0 16px;padding:14px 16px;
+    border:1px solid color-mix(in srgb,var(--teal) 28%,var(--line));border-radius:var(--r);background:color-mix(in srgb,var(--teal) 6%,var(--panel));color:var(--ink);text-decoration:none}
+  .catalog-arena-banner:hover{border-color:var(--teal);text-decoration:none}
+  .catalog-arena-banner:focus-visible{outline:2px solid var(--teal);outline-offset:3px}
+  .catalog-arena-copy{flex:1 1 240px;min-width:0}
+  .catalog-arena-copy b{display:block;font-size:13px}
+  .catalog-arena-copy small{display:block;margin-top:4px;color:var(--muted);font-size:12px}
+  .catalog-arena-link{color:var(--teal);font-size:12px;font-weight:600;white-space:nowrap}
   /* A section heading is a real heading, not a caption: the page is browsed by category, so the
      category has to be the loudest thing on it after the page title. */
   .tgroup.shelf{margin-bottom:34px}
@@ -1272,6 +1280,10 @@ a:hover{text-decoration-color:var(--muted)}
                 <h2 class="sec-h"><b>{{g.category}}</b><span class="sec-n">{{g.total}}</span></h2>
                 <span class="sec-hint" v-if="g.hint">{{g.hint}}</span>
               </div>
+              <a v-if="g.category==='Enrichment'" class="catalog-arena-banner" href="/enrich-arena">
+                <span class="catalog-arena-copy"><b>Compare enrichment vendors</b><small>Find emails, phone numbers and company data in Enrich Arena.</small></span>
+                <span class="catalog-arena-link">Open Enrich Arena <span aria-hidden="true">→</span></span>
+              </a>
               <div class="pt-grid">
                 <!-- The card is a NAME and two facts, nothing more: a description paragraph made
                      every card tall enough that a shelf of twelve became a scroll, and it repeated
