@@ -410,12 +410,17 @@ produce hypothetical hit counts or fresh-answer comparisons.
    keep-all decision (2026-08-29): unjudged providers' bodies ARE kept as short-lived cache, and
    the env flips it back to `forbidden` without a deploy. A JUDGED forbidden (a licence that was
    read and says no — Finnhub) is always respected, and a missing entry is never stored.
-3. **Tier.** Only METERED PLATFORM calls are recorded. Those responses are already fully buffered
+3. **Tier.** Only fully buffered METERED PLATFORM calls are recorded. Those responses are already fully buffered
    for the settle (`_buffer_response` needs the provider's reported cost), so recording adds no
    latency and no new data path. Own-key and own-tool calls stream and are never touched — that
    is the privacy line, enforced at write time, not filtered at read time.
 
 Gates 1+2 are `archive.policy(entry)`; gate 3 is the hook site's own context.
+
+Successful free final fetches that qualify for `MarketplaceCall.streamable_free_result` bypass both
+lookup and recording even though their zero-amount money lifecycle remains metered. They have no
+buffered body, so no empty or partial body/hash is recorded. Other calls exceeding the settlement
+buffer's 8 MiB limit fail before recording and cannot populate a cache or idempotent success.
 
 ## The cache key
 
