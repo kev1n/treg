@@ -520,7 +520,7 @@ def _effective_cost(raw: dict):
             "note": "price observed at live verification (provider-reported charge)"}
 
 
-_IGNORE_PATH = re.compile(r"(?:[A-Za-z_][A-Za-z0-9_-]*|\[\*\])(?:\[\*\])*(?:\.[A-Za-z_][A-Za-z0-9_-]*(?:\[\*\])*)*")
+_IGNORE_PATH = re.compile(r"(?:[A-Za-z0-9_][A-Za-z0-9_-]*|\[\*\])(?:\[\*\])*(?:\.[A-Za-z0-9_][A-Za-z0-9_-]*(?:\[\*\])*)*")
 
 
 def _validate_cache(cache) -> None:

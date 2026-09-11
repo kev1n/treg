@@ -1759,9 +1759,9 @@ an empty list. Provider-header inheritance and whole-block endpoint override fol
 cache policy rules. `store._validate_cache` rejects an invalid list or path during catalog loading,
 including provider-header declarations even when endpoint blocks override them.
 
-Paths are case-sensitive dot-separated property names matching `[A-Za-z_][A-Za-z0-9_-]*`, with
+Paths are case-sensitive dot-separated property names matching `[A-Za-z0-9_][A-Za-z0-9_-]*`, with
 `[*]` suffixes for arbitrary array elements: `request_id`, `data.items[*].updated_at`, or
-`matrix[*][*].request-id`. A root array can use `[*].request_id`. Empty lists are valid; null,
+`matrix[*][*].request-id`. Leading digits are allowed, e.g. `2fa_enabled`. A root array can use `[*].request_id`. Empty lists are valid; null,
 non-lists, non-string members, empty paths, numeric indices, plain `*`, `$` prefixes, spaces,
 empty segments, escaping and recursive wildcards are rejected. Keys containing literal dots or
 brackets are deliberately not addressable in this first grammar. Missing paths are harmless.

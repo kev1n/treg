@@ -534,8 +534,10 @@ async def _store(
         from .domain.catalog import store as catalog_store
         cache = (catalog_store.load().by_id.get(endpoint_id) or {}).get("cache")
         ignore_paths = cache.get("ignore_paths", []) if isinstance(cache, dict) else []
-        ignored_matches = (await _ignored_matches(kh, body, ignore_paths)
-                           if ignore_paths and origin in ("caller", "refresh") else set())
+        ignored_matches = set()
+        if ignore_paths and plan.storage is not None and origin in ("caller", "refresh"):
+            async with _get_sem():
+                ignored_matches = await _ignored_matches(kh, body, ignore_paths)
 
         # Same-key waiters must queue before taking a scarce database-write slot. Otherwise four
         # duplicate recordings can occupy the whole semaphore while only one touches the database.
@@ -556,9 +558,10 @@ async def _store(
                         if attempt == 3:
                             raise
                         await asyncio.sleep(0.01 * (attempt + 1))
-        if change is not None:
+        if change is not None and get_settings().archive_change_observation_enabled:
             previous_id, masked_by_ignore = change
-            await _observe_change(previous_id, body, endpoint_id, provider, masked_by_ignore)
+            async with _get_sem():
+                await _observe_change(previous_id, body, endpoint_id, provider, masked_by_ignore)
     except asyncio.CancelledError:
         reason = "cancelled"
         raise
@@ -609,6 +612,24 @@ def _normalized_hash(body: bytes, paths: list[str]) -> str | None:
         return None
 
 
+async def _change_compute(fn, *args):
+    """Keep the caller's semaphore slot until its CPU job really finishes on cancellation."""
+    task = asyncio.create_task(asyncio.to_thread(fn, *args))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        await task
+        raise
+
+
+def _has_change_body(snapshot) -> bool:
+    # Legacy rows may have a deferred body and no location marker: preserve their fallback.
+    # A loaded NULL with no carrier/location is known hash-only and needs no read.
+    return (snapshot.body_storage in ("both", "r2")
+            or snapshot.body_of is not None
+            or snapshot.__dict__.get("body", True) is not None)
+
+
 async def _ignored_matches(key_hash: str, body: bytes, paths: list[str]) -> set[int]:
     """Pre-read at most latest/decisive bodies; the writer accepts only its actual baseline ID.
 
@@ -622,7 +643,7 @@ async def _ignored_matches(key_hash: str, body: bytes, paths: list[str]) -> set[
     matches = set()
     try:
         async with asyncio.timeout(_CHANGE_TIMEOUT_S):
-            new_hash = await asyncio.to_thread(_normalized_hash, body, paths)
+            new_hash = await _change_compute(_normalized_hash, body, paths)
             if new_hash is None:
                 return matches
             async with background_session_maker() as s:
@@ -637,12 +658,13 @@ async def _ignored_matches(key_hash: str, body: bytes, paths: list[str]) -> set[
                 rows = (await s.execute(select(ArchiveSnapshot).where(
                     ArchiveSnapshot.key_id == key.id, ArchiveSnapshot.id.in_(ids))
                     .options(*archive_bodies.read_options("observation")))).scalars().all()
-                pointers = [(row.id, await archive_bodies.pointer(s, row, "observation")) for row in rows]
+                pointers = [(row.id, await archive_bodies.pointer(s, row, "observation"))
+                            for row in rows if _has_change_body(row)]
             for snapshot_id, pointer in pointers:
                 previous = await archive_bodies.read(pointer, "observation")
                 if previous is None:
                     change_outcomes["ignore_body_unavailable"] += 1
-                elif await asyncio.to_thread(_normalized_hash, previous, paths) == new_hash:
+                elif await _change_compute(_normalized_hash, previous, paths) == new_hash:
                     matches.add(snapshot_id)
     except Exception:
         change_outcomes["ignore_comparison_failed"] += 1
@@ -660,12 +682,19 @@ def _change_summary(old_body: bytes, new_body: bytes) -> dict:
     paths: set[str] = set()
     missing = object()
 
+    def equal(left, right):
+        if type(left) is not type(right):
+            return False
+        if isinstance(left, dict):
+            return left.keys() == right.keys() and all(equal(v, right[k]) for k, v in left.items())
+        if isinstance(left, list):
+            return len(left) == len(right) and all(equal(a, b) for a, b in zip(left, right))
+        return left == right
+
     def walk(left, right, path, depth):
-        if (type(left) is type(right)
-                and json.dumps(left, sort_keys=True) == json.dumps(right, sort_keys=True)):
-            return
         if depth >= 6:
-            paths.add(path or "$")
+            if not equal(left, right):
+                paths.add(path or "$")
         elif isinstance(left, dict) and isinstance(right, dict):
             for key in left.keys() | right.keys():
                 walk(left.get(key, missing), right.get(key, missing),
@@ -674,7 +703,7 @@ def _change_summary(old_body: bytes, new_body: bytes) -> dict:
             for i in range(max(len(left), len(right))):
                 walk(left[i] if i < len(left) else missing,
                      right[i] if i < len(right) else missing, path + "[*]", depth + 1)
-        else:
+        elif not equal(left, right):
             paths.add(path or "$")
 
     def leaves(value, depth=0):
@@ -698,7 +727,8 @@ async def _read_change_body(snapshot_id: int) -> bytes | None:
     async with background_session_maker() as s:
         row = (await s.execute(select(ArchiveSnapshot).where(ArchiveSnapshot.id == snapshot_id)
                               .options(*archive_bodies.read_options("observation")))).scalar_one_or_none()
-        pointer = await archive_bodies.pointer(s, row, "observation") if row is not None else None
+        pointer = (await archive_bodies.pointer(s, row, "observation")
+                   if row is not None and _has_change_body(row) else None)
     return await archive_bodies.read(pointer, "observation") if pointer is not None else None
 
 
@@ -712,7 +742,7 @@ async def _observe_change(previous_id: int, body: bytes, endpoint_id: str, provi
             if previous is None:
                 change_outcomes["body_unavailable"] += 1
                 return
-            props = await asyncio.to_thread(_change_summary, previous, body)
+            props = await _change_compute(_change_summary, previous, body)
             props["masked_by_ignore"] = masked_by_ignore
             analytics.capture("archive", "archive_change_observed",
                               dict(endpoint_id=endpoint_id, provider=provider, **props))
@@ -882,6 +912,8 @@ async def _store_locked(
             kept=plan.storage is not None, size=len(body), now=now)
         await s.commit()
         return ((newest.id, masked_by_ignore) if newest is not None and newest.content_hash != ch
+                and plan.storage is not None and _has_change_body(newest)
+                and get_settings().archive_change_observation_enabled
                 and origin in ("caller", "refresh") else None)
 
 

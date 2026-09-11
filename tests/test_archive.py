@@ -700,6 +700,11 @@ async def test_admin_archive_keys_endpoint(clients: AsyncClient, serve, monkeypa
 
         rep = (await clients.get("/admin/archive", headers={"X-Treg-Token": "ADM-TOKEN"})).json()
         assert rep["hits_today"] == 1 and "worker_on" in rep and "refresh_daily_cap" in rep
+        assert rep["change_outcomes"] == dict(archive.change_outcomes)
+        assert rep["body_outcomes"] == dict(archive.archive_bodies.outcomes)
+        monkeypatch.setitem(archive.change_outcomes, "observation_failed", 123)
+        cached = (await clients.get("/admin/archive", headers={"X-Treg-Token": "ADM-TOKEN"})).json()
+        assert cached["change_outcomes"]["observation_failed"] == 123
         row = next(x for x in rep["endpoints"] if x["endpoint_id"] == EP)
         assert row["hits"] == 1 and row["kept_bytes"] > 0
     finally:
@@ -1392,7 +1397,7 @@ def test_catalog_rejects_invalid_ignore_paths(tmp_path, paths, at_header):
 
 def test_catalog_preserves_ignore_paths_and_defaults(tmp_path):
     import yaml
-    paths = ['request_id', 'data[*].updated_at', '[*].id', 'matrix[*][*].meta.request-id']
+    paths = ['2fa_enabled', 'data.123status', 'request_id', 'data[*].updated_at', '[*].id', 'matrix[*][*].meta.request-id']
     doc = {'provider': 'test', 'cache': {'mode': 'transient', 'ignore_paths': paths},
            'endpoints': [{'id': 'test.inherit'}, {'id': 'test.override', 'cache': {'mode': 'transient'}}]}
     (tmp_path / 'test.yaml').write_text(yaml.safe_dump(doc))
@@ -1516,3 +1521,83 @@ async def test_refresh_observation_and_terminal_exclusion(clients, shadow, monke
     assert len(snaps) == 3 and (keys[0].stable_seen, keys[0].change_seen) == (1, 0)
     observed = [p for name, p in events if name == 'archive_change_observed']
     assert len(observed) == 1 and observed[0]['masked_by_ignore'] is True
+
+
+async def test_observation_and_ignore_reads_share_archive_budget(clients, shadow, monkeypatch):
+    from tests.test_marketplace_call import _fake_relay
+    monkeypatch.setitem(catalog_store.load().by_id[EP], 'cache',
+                        {'mode': 'transient', 'ignore_paths': ['request_id']})
+    seen = []
+    for name in ('_ignored_matches', '_read_change_body'):
+        original = getattr(archive, name)
+        async def checked(*args, _original=original, _name=name):
+            assert archive._get_sem()._value < archive._MAX_CONCURRENT_WRITES
+            seen.append(_name)
+            return await _original(*args)
+        monkeypatch.setattr(archive, name, checked)
+    for value in (1, 2):
+        monkeypatch.setattr(call_service, 'relay', _fake_relay(200, json.dumps({'value': value}).encode()))
+        assert (await clients.get(f'/call/{EP}?aweme_id=7')).status_code == 200
+        await archive.drain()
+    assert '_ignored_matches' in seen and '_read_change_body' in seen
+
+
+@pytest.mark.parametrize('skip', ['disabled', 'old_hash_only', 'oversize', 'action'])
+async def test_change_skips_unavailable_or_disabled_without_io(clients, shadow, monkeypatch, skip):
+    from tests.test_marketplace_call import _fake_relay
+    settings = get_settings()
+    if skip == 'old_hash_only':
+        monkeypatch.setattr(settings, 'archive_max_body_bytes', 0)
+    if skip == 'action':
+        monkeypatch.setitem(catalog_store.load().by_id[EP], 'kind', 'action')
+    monkeypatch.setattr(call_service, 'relay', _fake_relay(200, b'{"value":1}'))
+    await clients.get(f'/call/{EP}?aweme_id=7')
+    await archive.drain()
+    if skip == 'old_hash_only':
+        monkeypatch.setattr(settings, 'archive_max_body_bytes', 2_000_000)
+    if skip == 'oversize':
+        monkeypatch.setattr(settings, 'archive_max_body_bytes', 0)
+    if skip == 'disabled':
+        monkeypatch.setattr(settings, 'archive_change_observation_enabled', False)
+    async def forbidden(*args):
+        pytest.fail('skipped observation must not start any read/compute')
+    monkeypatch.setattr(archive, '_read_change_body', forbidden)
+    monkeypatch.setattr(archive, '_change_compute', forbidden)
+    before = archive.change_outcomes.copy()
+    monkeypatch.setattr(call_service, 'relay', _fake_relay(200, b'{"value":2}'))
+    await clients.get(f'/call/{EP}?aweme_id=7')
+    await archive.drain()
+    assert archive.change_outcomes == before
+    assert len((await _rows())[1]) == 2
+
+
+async def test_cancelled_change_compute_keeps_slot_until_thread_finishes():
+    import asyncio
+    import threading
+    started, release = threading.Event(), threading.Event()
+    def compute():
+        started.set()
+        release.wait(2)
+    async def run():
+        async with archive._get_sem():
+            await archive._change_compute(compute)
+    task = asyncio.create_task(run())
+    try:
+        while not started.is_set():
+            await asyncio.sleep(0.001)
+        task.cancel()
+        await asyncio.sleep(0.01)
+        assert not task.done()
+        assert archive._get_sem()._value == archive._MAX_CONCURRENT_WRITES - 1
+    finally:
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert archive._get_sem()._value == archive._MAX_CONCURRENT_WRITES
+
+
+def test_change_summary_never_reserializes_subtrees(monkeypatch):
+    def forbidden(*args, **kwargs):
+        pytest.fail('structure comparison must not reserialize JSON')
+    monkeypatch.setattr(archive.json, 'dumps', forbidden)
+    assert archive._change_summary(b'{"a":[{"b":1}]}', b'{"a":[{"b":2}]}')['changed_paths'] == ['a[*].b']

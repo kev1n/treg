@@ -637,12 +637,22 @@ preceding snapshot for `caller` and `refresh` origins only. Cache hits and async
 never emit `archive_change_observed`. The background task has a separate three-second observation
 budget after the existing 30-second DB stage. Failure cannot undo or prevent the recording.
 `_read_change_body` collects an `archive_bodies.pointer` in a short background session, closes it,
-then calls `archive_bodies.read`. The internal `observation` read path follows published R2
-locations (including R2-only rows), with the normal verified GET and DB fallback. No new DB writes,
-tables, per-key detail or configuration switches are introduced. Process-local `change_outcomes`
-counts `observed`, `body_unavailable` and `observation_failed`; missing bytes skip the event.
+then calls `archive_bodies.read`. Observation follows `TREG_ARCHIVE_BODY_READ_LOOKUP`: default
+`db` makes no R2 requests; `r2-first` uses verified GET and falls back exclusively to the background
+pool. It cannot enable R2 independently of the existing startup checks or rollback switches.
+`TREG_ARCHIVE_CHANGE_OBSERVATION_ENABLED=false` disables change reporting and its reads/CPU work
+(default true). Declared ignore-path TTL comparison remains a separate decision mechanism.
+Both ignore comparison and change reporting share the recorder/touch semaphore budget of two,
+including fallback sessions and CPU work. No DB connection is held during object I/O. New bodies
+not retained by policy/size/storage and known hash-only previous snapshots skip observation.
+Process-local `change_outcomes` counts `observed`, `body_unavailable`, `observation_failed`,
+`ignore_body_unavailable` and `ignore_comparison_failed`. `/admin/archive` exposes this mapping and
+`body_outcomes` (archive_bodies.outcomes), including on cached report responses; counters reset on
+restart and are per process, not durable or fleet-wide totals.
 
-`_change_summary` runs off the event loop. JSON differences use dot paths, collapse array indices
+`_change_summary` runs off the event loop. Structure comparison visits each subtree once without
+repeated JSON serialization, retaining type-sensitive comparisons. Cancellation keeps the semaphore
+slot occupied until the bounded-size CPU job finishes; asyncio timeout does not stop a Python thread. JSON differences use dot paths, collapse array indices
 to `[*]`, stop at six levels and retain the first 20 sorted distinct paths. `path_count` counts all
 distinct paths before truncation; `truncated` marks more than 20. Added/removed fields, array length
 and type changes count; a changed container at the depth boundary counts at its boundary path.
@@ -715,7 +725,8 @@ limit. It never uses reported/truncated paths to make a decision.
 
 `_ignored_matches` preloads at most the latest and decisive snapshot bodies via `archive_bodies`
 in the background recorder, before the DB write stage. Pointer sessions close before object I/O.
-This optional pre-read has its own three-second budget, leaving the DB stage's 30 seconds intact.
+This optional pre-read holds the shared archive semaphore and has its own three-second budget,
+leaving the DB stage's 30 seconds intact. Hash-only baselines and unstored new bodies are skipped.
 It returns matching snapshot IDs only. `_store_locked` still locks and selects the actual baseline;
 if another recording advances it beyond those IDs, that recording conservatively uses raw hashes.
 No cross-process lock is held during object I/O, and no retry/reconciliation write is introduced.
@@ -727,3 +738,10 @@ raw body storage, `content_hash`, deduplication and response bytes are untouched
 returns exactly the retained answer; the learned expiration can change only for an opted-in endpoint.
 Read/analysis failures preserve strict comparison. No schema migration, new DB write, serving
 allowlist change, production configuration, field selection UI or automated ignore proposal ships.
+
+Known deferred limitation: `changed_paths` compares the immediately previous snapshot, while
+`masked_by_ignore` can refer to a different decisive baseline. No endpoint currently declares
+ignore paths, so the latter is always false. **This must be fixed before the first ignore list
+is introduced.** This delivery only documents the mismatch; it does not change snapshot pairing.
+
+Ignore-path segments may begin with digits, e.g. `2fa_enabled` or `data.123status`.

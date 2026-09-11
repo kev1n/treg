@@ -219,8 +219,9 @@ class BodyPointer:
 
 
 def _r2_first(path: str) -> bool:
-    # Background change analysis follows the published location, including R2-only history.
-    return path == "observation" or getattr(get_settings(), "archive_body_read_" + path) == "r2-first"
+    # Observation shares lookup's rollout/rollback switch; it never enables R2 independently.
+    path = "lookup" if path == "observation" else path
+    return getattr(get_settings(), "archive_body_read_" + path) == "r2-first"
 
 
 def read_options(path):
@@ -238,13 +239,14 @@ async def pointer(session, snapshot, path):
     return BodyPointer(snapshot.content_hash, snapshot.body_storage, body, None)
 
 
-async def _db_fallback(pointer):
-    from .infra.db import session_maker
+async def _db_fallback(pointer, path):
+    from .infra.db import session_maker, background_session_maker
     from .models import ArchiveSnapshot
     from .archive import _snapshot_body, _unpack
     if pointer.snapshot_id is None:
         return _unpack(pointer.body, pointer.enc)
-    async with session_maker() as session:
+    maker = background_session_maker if path == "observation" else session_maker
+    async with maker() as session:
         row = await session.get(ArchiveSnapshot, pointer.snapshot_id)
         return await _snapshot_body(session, row) if row is not None else None
 
@@ -281,5 +283,5 @@ async def read(pointer: BodyPointer, path: str, *, diagnostics: dict | None = No
         level = logging.ERROR if reason in {"permission_denied", "hash_mismatch", "too_large"} else logging.WARNING
         _log.log(level, "archive R2 read fallback path=%s reason=%s elapsed_ms=%s exception_type=%s",
                  path, reason, elapsed, error_type)
-    body = await _db_fallback(pointer)
+    body = await _db_fallback(pointer, path)
     return observed(body, "db" if body is not None else "none")

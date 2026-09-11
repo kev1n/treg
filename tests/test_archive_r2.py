@@ -914,6 +914,7 @@ async def test_singleflight_shares_exhausted_retry_result(r2, monkeypatch):
 
 
 async def test_change_observation_reads_r2_only_without_db_connection(clients, r2, monkeypatch):
+    monkeypatch.setattr(get_settings(), 'archive_body_read_lookup', 'r2-first')
     monkeypatch.setattr(get_settings(), 'archive_body_write', 'r2')
     monkeypatch.setattr(get_settings(), 'archive_mode', 'shadow')
     events = []
@@ -930,6 +931,7 @@ async def test_change_observation_reads_r2_only_without_db_connection(clients, r
 
 
 async def test_ignore_learning_reads_r2_only_without_db_connection(clients, r2, monkeypatch):
+    monkeypatch.setattr(get_settings(), 'archive_body_read_lookup', 'r2-first')
     from treg.domain.catalog import store
     monkeypatch.setattr(get_settings(), 'archive_body_write', 'r2')
     monkeypatch.setattr(get_settings(), 'archive_mode', 'shadow')
@@ -943,3 +945,30 @@ async def test_ignore_learning_reads_r2_only_without_db_connection(clients, r2, 
         key = (await s.execute(select(ArchiveKey))).scalar_one()
         assert (key.stable_seen, key.change_seen) == (1, 0)
     assert all(row.body is None for row in await snapshots())
+
+
+@pytest.mark.parametrize('read_mode', ['db', 'r2-first'])
+async def test_observation_uses_background_fallback_and_lookup_switch(clients, r2, monkeypatch, read_mode):
+    from contextlib import asynccontextmanager
+    monkeypatch.setattr(get_settings(), 'archive_body_read_lookup', read_mode)
+    calls = []
+    @asynccontextmanager
+    async def background():
+        calls.append('background')
+        class Session:
+            async def get(self, *args):
+                return None
+        yield Session()
+    def api():
+        pytest.fail('observation must never use API pool')
+    class Store:
+        async def get(self, *args):
+            calls.append('r2')
+            return None
+    monkeypatch.setattr(db, 'background_session_maker', background)
+    monkeypatch.setattr(db, 'session_maker', api)
+    monkeypatch.setattr(archive_bodies, '_store', Store())
+    pointer = archive_bodies.BodyPointer(archive.content_hash(RAW), 'both', None, None, 1)
+    assert await archive_bodies.read(pointer, 'observation') is None
+    assert calls == (['r2', 'background'] if read_mode == 'r2-first' else ['background'])
+    assert archive_bodies._r2_first('observation') == (read_mode == 'r2-first')
