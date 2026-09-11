@@ -1530,14 +1530,16 @@ endpoints:
         - integer
         - string
         required: false
-        note: Sort order. Use the canonical JSON integer 0 for relevance or 1 for most liked; legacy numeric
-          strings remain accepted.
+        note: Sort order. Use the canonical JSON integer 0 for relevance, 1 for most liked, or 2 for newest
+          first; legacy numeric strings remain accepted.
         default: 0
         enum:
         - 0
         - 1
+        - 2
         - '0'
         - '1'
+        - '2'
         example: 0
     bodyType: json
   test_request:
