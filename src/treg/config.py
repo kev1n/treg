@@ -5,7 +5,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, PositiveInt, field_validator
 from urllib.parse import urlsplit
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -309,6 +309,7 @@ class Settings(BaseSettings):
     # enable. Staged deliberately so production can sit in "shadow" while phase 0 measures.
     archive_mode: str = "off"
     archive_body_write: Literal["db", "both", "r2"] = "db"
+    archive_change_observation_enabled: bool = True
     archive_body_read_lookup: Literal["db", "r2-first"] = "db"
     archive_body_read_result: Literal["db", "r2-first"] = "db"
     archive_body_read_terminal: Literal["db", "r2-first"] = "db"
@@ -327,6 +328,8 @@ class Settings(BaseSettings):
     archive_serve_endpoints: str = ""
     # Stable team/endpoint cohorts; 0 disables serving, 100 includes every team.
     archive_serve_percent: int = 0
+    # Operator freshness ceilings by exact endpoint ID; independent of vendor declarations.
+    archive_serve_max_age_s: dict[str, PositiveInt] = Field(default_factory=dict)
     # Bodies above this size are hash-counted but never stored (skipped whole, not truncated):
     # the archive is for API JSON answers, not downloads. Statistics still record size_bytes.
     archive_max_body_bytes: int = 2_000_000

@@ -217,6 +217,10 @@ How it works:
 - **Result URLs expire** (the descriptor's `ttl_note` says how soon; MiniMax's ~9h). Download
   promptly; treg never stores the media. On some routes the file needs one more call -
   `--await` prints that exact command instead of downloading.
+- Responses needing settlement or task-ownership evidence are limited to 8 MiB. Larger responses
+  return `502` with `detail.error=response_buffer_limit` and no charge; retrying the same oversized
+  response will not help. Authorized free final downloads needing no body evidence stream in full.
+  Such downloads are fetched again on retry, not retained for local idempotent replay.
 
 ## Retrying a call without paying twice
 
@@ -308,6 +312,8 @@ expires. Same storage; a credential can graduate from manual to auto with no mig
   One-time setup: add `https://treg.to/oauth/callback` to your OAuth app's redirect URIs.
 
 ## Task — manage the team + monitor
+
+An account can own up to 10 teams. Joining other teams as a member does not count toward this limit.
 ```bash
 treg tool ls / secret ls / skill ls / calls          # inventory + audit log — scoped to the active org
 treg tool rm <id> / secret rm <id> / skill rm <id>   # secret rm is blocked while a tool binds it

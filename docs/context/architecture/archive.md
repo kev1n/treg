@@ -3,6 +3,7 @@ title: Archive - versioned history and cache admission
 status: building
 sources:
   - src/treg/archive.py
+  - src/treg/catalog/hunter.yaml
   - src/treg/domain/catalog/results.py
   - src/treg/alembic/versions/0031_archive_result_admission.py
   - tests/test_cache_result_admission.py
@@ -68,7 +69,8 @@ Every object name is the raw body's SHA-256, with no prefix. The caller supplies
 uses `checksum_algorithm=SHA256` so R2 verifies the upload checksum. A successful single PUT
 returns its hash and byte size, with no follow-up HEAD. HEAD makes one request for size. No custom
 sha256 attribute is stored or checked; GET enforces size limits and verifies the downloaded hash.
-Same-body concurrent uploads are harmless. R2 stores raw bytes, independent of the media type of any particular call.
+Same-body concurrent uploads share one PUT in the process; recent successful hashes skip PUT.
+R2 stores raw bytes, independent of the media type of any particular call.
 DB compression remains unchanged. GET verifies the full hash before returning data.
 
 Migration `0032` adds nullable `ArchiveSnapshot.body_storage`: `db`, `both`, or `r2`; NULL is
@@ -94,16 +96,20 @@ content-addressed object; no pointer names a failed upload. Existing policy and 
 before uploading. Hash-only history stays in DB when bytes are ineligible.
 
 R2 has independent `ARCHIVE_R2_UPLOAD_CONCURRENCY` (8), `ARCHIVE_R2_MAX_PENDING` (256), and
-`ARCHIVE_R2_MAX_PENDING_BYTES` (128 MiB) budgets. Only PUT holds an
-upload slot. The DB stage keeps its original two slots and 30-second deadline. Upload admission
+`ARCHIVE_R2_MAX_PENDING_BYTES` (128 MiB) budgets. A leader holds one upload slot for
+its bounded attempt sequence, including retry jitter; duplicate waiters hold no upload slot. The DB stage keeps its original two slots and 30-second deadline. Upload admission
 failure falls back to the separately bounded DB queue: `both` retains DB bytes, while `r2`
 retains only hash/history/statistics if DB admission succeeds.
-`ARCHIVE_R2_TIMEOUT_S` (10 seconds) bounds PUT only; upload-slot waiting is measured separately as `queue_wait_ms`.
+`ARCHIVE_R2_TIMEOUT_S` (10 seconds) bounds the complete PUT/retry sequence after upload-slot
+admission, including retry jitter. Upload-slot waiting is outside that timeout and is measured
+separately as `queue_wait_ms`. No extra timeout layer is introduced.
 `ARCHIVE_R2_READ_TIMEOUT_S` (2 seconds, configurable) separately bounds each lookup/result/terminal
 GET including materializing bytes. The shared SDK transport uses the larger timeout so it cannot
 prematurely cut off either operation; application deadlines enforce the separate budgets.
 Terminal evidence bypasses best-effort queue admission and synchronously retries uploads up to
-`ARCHIVE_R2_TERMINAL_ATTEMPTS` (3), with bounded backoff, before the DB write. Terminal evidence has an 8-second total upload budget (including queue
+`ARCHIVE_R2_TERMINAL_ATTEMPTS` (3), with bounded backoff, before the DB write.
+429/5xx are capped at two attempts even for terminal evidence; other terminal failures retain
+the configured attempt limit, now within the shared transfer budget. Terminal evidence has an 8-second total upload budget (including queue
 wait and retries), at most 20 seconds for DB, and a 28-second total deadline. Upload exhaustion
 falls back to DB even for terminal evidence in R2-only mode. A cancelled waiter drains that
 bounded evidence operation before propagating cancellation; failures and deadlines log explicitly. Its settlement has
@@ -131,7 +137,9 @@ Read diagnostics are in place before enabling any `r2-first` switch. Lookup adds
 All paths log bounded reasons without exception text, keys, bodies or credentials:
 `not_found` and `timeout` are WARNING; `permission_denied` (including signature failures) and
 `hash_mismatch` are ERROR. Oversized objects are also ERROR (`too_large`); other transport errors
-and an unavailable client are WARNING (`store_error`, `store_unavailable`). Result and terminal
+and an unavailable client are WARNING (`store_error`, `store_unavailable`). HTTP 429 is
+`rate_limited`, HTTP 5xx is `upstream_error`, both WARNING on read fallback. These same reason
+names appear on failed uploads. Logs include the exception class, never the exception text. Result and terminal
 reads use these logs because they have no `tool_called`. Existing per-path process counters remain;
 additional bounded per-path/reason counters distinguish the failure classes.
 
@@ -186,8 +194,12 @@ dry run by default, `--apply` to write, `--render` for the prod allowlist dance.
 `domain.catalog.results.classify` inspects the already-buffered provider bytes without rewriting
 any response. `has_result_rules` enables result-aware behavior only for endpoints with a
 verified adapter and a nonempty hit/miss expression. Those endpoints reuse `Adapter.is_miss`.
-Three endpoints additionally validate result fields: `hunter.companies.emails`,
-`leadmagic.x.employee-finder`, and `seranking.google.keywords.volume`. Results are `found`,
+Strict result validators cover `hunter.companies.emails`, `leadmagic.x.employee-finder`,
+`seranking.google.keywords.volume`, `leadsforge.people.email.find`, `hunter.people.email.find`,
+and `findymail.search.name`. The last two require a shaped email string inside `data` or `contact`;
+an explicit null email is empty, and Findymail also accepts an explicit null contact as empty.
+Missing fields, empty strings and malformed addresses are unknown. Leadsforge additionally
+requires its successful status as described below. Results are `found`,
 `empty`, `error`, or `unknown`, with bounded reason codes. Hunter needs actual email values;
 LeadMagic needs person identity fields, not an email address; SE Ranking needs boolean
 `is_data_found` and a valid nonnegative volume for found rows. Zero volume is useful data. A
@@ -212,7 +224,9 @@ The pointer is owned by the archive writer and key ownership is checked on reads
 never deleted, so no cyclic foreign key is introduced.
 
 For endpoints with enabled hit/miss rules, only found-to-found observations can count stable.
-Strict mode compares exact raw-byte hashes.
+The default compares JSON with sorted object keys and compact whitespace; arrays, types and values
+remain significant. Declared `cache.ignore_paths` additionally excludes specific fields. Non-JSON
+or unavailable/ambiguous bodies fall back to exact raw-byte hashes.
 Found-to-empty counts one change and invalidates serving; repeated empty results neither grow
 nor shrink TTL. Empty-to-found counts a change and restores eligibility. Errors and unknowns add
 history under the existing capture policy but do not replace decisive evidence or update learning.
@@ -234,10 +248,11 @@ by min(30 d, the judged `cache.max_age_s`); changed ⇒ ×0.5, floored at 60 s. 
 until a stable refetch resets it. The lookup prefers the learned timer (`ttl_s > 0`) over the
 fixed phase-1 guesses.
 
-**Strict comparison.** Result admission still selects the decisive baseline and controls which
-transitions train TTL. Among found-to-found observations, identical raw hashes count stable and
-differing hashes count changed. The legacy field-noise heuristic is removed; hash comparison
-never fetches an old R2 body.
+**Comparison.** Result admission selects the decisive baseline and controls which transitions
+train TTL. Identical raw hashes count stable; differing hashes can still count stable when default
+JSON normalization, optionally excluding `cache.ignore_paths`, makes the comparison equal. The
+legacy
+field-noise heuristic remains removed; observation reporting never determines TTL.
 
 ## The refresh worker (PR 5)
 
@@ -270,6 +285,10 @@ statistics — only `last_requested_at` (fire-and-forget `_touch`), the demand s
 Freshness (phase 1) is `archive.ttl_for(entry)`: FIXED guesses per capability prefix
 (`crypto.price` 5 min, `web.search` 1 h, `people.`/`company.` 7 d, default 1 h), always capped by
 a judged `cache.max_age_s` (CoinGecko's 24 h duty). The learner (PR 5) replaces these per key.
+`declared_max_age_s()` supplies the vendor ceiling to defaults, learning and lookup. Serving
+caps even an already-learned positive TTL by that declaration, then by caller `X-Treg-Max-Age`.
+Without a declared ceiling, learned TTLs can exceed capability defaults; lookup never uses the
+static default to cap a positive learned TTL.
 
 Caller controls, always honored: `Cache-Control: no-cache`/`no-store` forces a live call (the
 read-after-write escape — the archive never guesses cross-endpoint effects); `X-Treg-Max-Age`
@@ -287,8 +306,9 @@ One licence judgment per PROVIDER, written once at the YAML file header and inhe
 endpoint below it; an endpoint's own `cache:` overrides. `catalog_store` carries the header form
 into `provider_meta["cache"]` (dict, not stringified) and stamps the effective value onto each
 normalized endpoint (`entry["cache"]`, absent ⇒ None ⇒ forbidden). The provenance form is
-`{mode, license_quote, source_url, checked}` plus optional `max_age_s` — a vendor-imposed refresh
-ceiling the learner (PR 5) must treat as a hard cap. `tests/test_archive.py` validates every
+`{mode, license_quote, source_url, checked}` plus optional `ignore_paths` and `max_age_s` — a vendor-imposed refresh
+ceiling the learner (PR 5) must treat as a hard cap. A comparison-only mapping containing
+`ignore_paths` need not declare a license mode; it retains the configured default retention policy. `tests/test_archive.py` validates every
 declared field in the shipped catalog: a judged entry must carry its quote, source and date.
 
 First judged set (checked 2026-08-27): **coingecko** `transient` with `max_age_s: 86400` — their
@@ -346,13 +366,16 @@ enable. Rollback in production is a dashboard env edit, no deploy.
 ## Conservative comparison and controlled serving (2026-09-08)
 
 The comparison setting and helper are removed. Old `TREG_ARCHIVE_COMPARISON_MODE` environment
-values are ignored, including `legacy_noise`; events and admin props report `strict`. Only exact
-found-to-found hashes count stable.
+values are ignored, including `legacy_noise`. Events and admin props now report `json`: object
+order and whitespace are ignored by default. Endpoint declarations can further relax comparison
+using `cache.ignore_paths`; `archive_change_observed.masked_by_ignore` reports byte changes
+rescued by either normalization or declared field exclusions. An empty changed-path list with
+this flag indicates representation-only changes.
 
 TTL learning and lookup retain the original behavior: stable observations grow the timer by
 1.5, changed observations halve it, and TTL_NEVER remains respected. The fixed capability timer
 is only the initial/fallback value. Switching comparison mode does not reset existing timers,
-volatile paths or cumulative counters; strict observations continue updating the existing state.
+volatile paths or cumulative counters; new observations continue updating the existing state.
 There is no separate fixed-TTL mode or learning-version migration. Old stable/changed counters
 remain lifetime mixed-policy statistics, not a clean measurement of strict comparison.
 `/admin/archive` exposes that caveat plus comparison mode, adaptive TTL policy, endpoint
@@ -403,12 +426,17 @@ produce hypothetical hit counts or fresh-answer comparisons.
    keep-all decision (2026-08-29): unjudged providers' bodies ARE kept as short-lived cache, and
    the env flips it back to `forbidden` without a deploy. A JUDGED forbidden (a licence that was
    read and says no — Finnhub) is always respected, and a missing entry is never stored.
-3. **Tier.** Only METERED PLATFORM calls are recorded. Those responses are already fully buffered
+3. **Tier.** Only fully buffered METERED PLATFORM calls are recorded. Those responses are already fully buffered
    for the settle (`_buffer_response` needs the provider's reported cost), so recording adds no
    latency and no new data path. Own-key and own-tool calls stream and are never touched — that
    is the privacy line, enforced at write time, not filtered at read time.
 
 Gates 1+2 are `archive.policy(entry)`; gate 3 is the hook site's own context.
+
+Successful free final fetches that qualify for `MarketplaceCall.streamable_free_result` bypass both
+lookup and recording even though their zero-amount money lifecycle remains metered. They have no
+buffered body, so no empty or partial body/hash is recorded. Other calls exceeding the settlement
+buffer's 8 MiB limit fail before recording and cannot populate a cache or idempotent success.
 
 ## The cache key
 
@@ -520,7 +548,7 @@ done callback releases bytes when a task completes, keeping the budget accurate.
 R2 queue adds 128 MiB by default, for a combined 384 MiB body budget before SDK, compression
 and terminal-evidence overhead.
 
-The semaphore is process-local, while production runs multiple processes. An exact in-process key
+The semaphore is process-local; the recorder also supports deployment with multiple processes. An exact in-process key
 lock is acquired before the semaphore, so duplicate recordings queue without consuming both
 database-write slots and unrelated keys keep moving; weak references discard inactive locks. Once
 admitted, the writer locks and refreshes the matching `ArchiveKey` row before reading the newest
@@ -545,7 +573,12 @@ script has no bucket argument and accepts only `treg-archive-dev`.
 
 ObjectStore owns the sole download hash validation; the memory fake follows the same contract.
 `put` accepts the internally computed content hash to avoid rehashing immutable bytes. Read and
-write errors use the same typed classification; SDK text is never parsed or logged.
+write errors use the same classification. `R2ObjectStore._failure` preserves typed auth/not-found/
+timeout reasons. obstore 0.11.1 exposes HTTP 429/5xx as `GenericError` without a status attribute;
+only that SDK type is inspected for its anchored transport-status prefix. Bare numbers and status
+text inside a response body do not qualify. No SDK text is logged or emitted; `ObjectStoreError`
+carries only a bounded reason and the underlying exception class. The real-wheel loopback test
+`test_real_obstore_http_status_classification` covers PUT/GET/HEAD and proves zero SDK retries.
 
 Pruning still strips eligible DB bytes during double writing. A stripped `both` row becomes
 `r2`; its content hash and object remain intact, and logical retained-body statistics do not
@@ -564,3 +597,187 @@ inferred from its storage location; failed R2-only uploads become hash-only plan
 recording emits its completion report from one `finally` block, while queue callbacks release
 budgets and report cancellation of tasks that never started. `tool_called` remains independent.
 The object-store lifespan chooses a real or injected context once and always resets the seam.
+
+
+## Same-hash upload deduplication
+
+`archive_bodies.prepare` keeps a process-local LRU of 20,000 successfully uploaded content hashes.
+An LRU hit returns a successful `WritePlan` with `upload_status=skipped_duplicate`, zero new
+transfer time and no PUT/HEAD. Only a completed PUT with matching `ObjectInfo` enters the LRU.
+Failures and cancellations never do. `configure` resets the cache when the store changes; restart
+or LRU eviction permits a later idempotent re-upload. A GET that finds an object missing or corrupt
+invalidates its recent-success entry so the existing live-refetch path can repair it.
+
+For a new hash, `prepare` registers one in-flight future before waiting for the upload semaphore.
+Followers await its result with `asyncio.shield`, holding no semaphore slot or DB connection, and
+report `upload_status=coalesced` on success. A cancelled follower cannot cancel its leader. A
+cancelled leader releases followers to normal DB fallback and removes the in-flight entry. All
+followers share the failure reason; none publishes an R2 pointer for a failed flight. In-flight
+entries are removed on every exit and stay within the existing admitted recording work.
+
+`submit` checks recent, queued and in-flight hashes before the R2 count/byte admission gates.
+A queued hash is registered synchronously, so even a burst before background tasks start consumes
+only one R2 pending entry and one body-sized byte allocation. Duplicate recordings instead use
+archive's existing bounded DB queue; `prepare` still joins/skips the PUT before any DB session.
+Every admitted call keeps its own history/statistics write as before. Duplicates never turn into
+unbounded work: the DB queue's 512-record/256 MiB limits still apply. Distinct-body bursts can
+still exhaust R2's unchanged 256-record/128 MiB budget; increasing those settings is not part of
+this fix. `duplicate_queue_bypass`, `skipped_duplicate` and `coalesced` process counters supplement
+the existing per-record `archive_body_stored.upload_status` values.
+
+Residual `rate_limited`/`upstream_error` failures get one retry on nonterminal uploads too, with
+1.0-1.5 seconds of jitter before retry. This clears the one-write-per-second same-key window and
+shares the existing transfer deadline rather than restarting it. Exhaustion keeps `storage=db`
+in `both` mode with `upload_status=failed` and the classified `drop_reason`; the DB copy is not
+reported as dropped. R2-only mode retains its existing hash-only fallback. No SDK retries are
+enabled, no new DB writes/columns/tables are added, and no production setting is changed.
+
+### Timing and queue interpretation
+
+Before this fix, `upload_ms` already started after acquiring the upload semaphore and ended after
+`ObjectStore.put` returned/raised. Nonterminal recordings made one attempt. Semaphore wait was
+already isolated in `queue_wait_ms`; a four-second failed nonterminal `upload_ms` was therefore
+four seconds in the SDK/transport operation, not four seconds waiting for a local slot. The
+locked obstore 0.11.1 with `max_retries=0` issues exactly one HTTP request on a 429 in the loopback
+regression; its configured SDK retry count remains zero. Neither fact identifies which part of a
+production network/server operation caused the delay.
+
+After this fix, leader `upload_ms` includes all attempts and jitter under its transfer budget;
+followers record their shared-flight wait in `queue_wait_ms` and zero transfer time. LRU hits have
+zero transfer/wait time. Do not interpret these post-fix per-record values as one SDK request's
+latency, or average duplicate statuses and zero-transfer failed waiters into physical PUT latency. R2 pending accounting spans the
+recording's DB completion too; it is not just the number of active PUTs. Compare existing failure/
+drop reasons, leader timing, and duplicate statuses after rollout before increasing queue budgets.
+
+
+## Change observation
+
+After `_store_locked` commits, `_observe_change` reports a byte-hash change from the baseline
+that actually drove TTL learning for `caller` and `refresh` origins only. Cache hits and async terminal evidence
+never emit `archive_change_observed`. The background task has a separate three-second observation
+budget after the existing 30-second DB stage. Failure cannot undo or prevent the recording.
+`_read_change_body` collects an `archive_bodies.pointer` in a short background session, closes it,
+then calls `archive_bodies.read`. Observation follows `TREG_ARCHIVE_BODY_READ_LOOKUP`: default
+`db` makes no R2 requests; `r2-first` uses verified GET and falls back exclusively to the background
+pool. It cannot enable R2 independently of the existing startup checks or rollback switches.
+`TREG_ARCHIVE_CHANGE_OBSERVATION_ENABLED=false` disables change reporting and its reads/CPU work
+(default true). Declared ignore-path TTL comparison remains a separate decision mechanism.
+Both ignore comparison and change reporting share the recorder/touch semaphore budget of two,
+including fallback sessions and CPU work. No DB connection is held during object I/O. New bodies
+not retained by policy/size/storage and known hash-only previous snapshots skip observation.
+Process-local `change_outcomes` counts `observed`, `body_unavailable`, `observation_failed`,
+`ignore_body_unavailable` and `ignore_comparison_failed`. `/admin/archive` exposes this mapping and
+`body_outcomes` (archive_bodies.outcomes), including on cached report responses; counters reset on
+restart and are per process, not durable or fleet-wide totals.
+
+`_change_summary` runs off the event loop. Structure comparison visits each subtree once without
+repeated JSON serialization, retaining type-sensitive comparisons. Cancellation keeps the semaphore
+slot occupied until the bounded-size CPU job finishes; asyncio timeout does not stop a Python thread. JSON differences use dot paths, collapse array indices
+to `[*]`, stop at six levels and retain the first 20 sorted distinct paths. `path_count` counts all
+distinct paths before truncation; `truncated` marks more than 20. Added/removed fields, array length
+and type changes count; a changed container at the depth boundary counts at its boundary path.
+Root changes use `$`. `leaf_count` counts new-body leaves at the same depth boundary (empty
+containers count as one). Byte-only whitespace/key-order changes can have zero changed paths.
+Non-JSON pairs use `changed_paths: [non_json]`, `path_count: 1`, `leaf_count: 0`.
+`sole_path` is the sole path when count is one, otherwise null.
+
+Analytics emits `archive_change_observed` with distinct ID `archive` and only `endpoint_id`,
+`provider`, `changed_paths`, `path_count`, `truncated`, `leaf_count`, `sole_path` and
+`masked_by_ignore` (true only when a declared ignore comparison actually rescues a stable TTL
+decision). The path report uses that same TTL baseline, including an older decisive snapshot
+across intervening unknown/error observations for result-aware endpoints. No values, body
+snippets, call references or key identities are sent. Paths are structural property names from JSON;
+these reports are not a schema or evidence that a field is safe to ignore. Observation is read-only
+and does not alter admission, learning, stored bytes, deduplication or serving.
+
+### Seven-day HogQL review
+
+Paste into the PostHog SQL editor. One row per endpoint/path; all ratios use that endpoint's
+observed byte changes as denominator. `sole_change_ratio` counts events where that path alone
+changed; `endpoint_sole_ratio` counts any sole-path change. Empty path lists remain in the total.
+Truncation makes per-path ratios lower bounds, so inspect `truncated_ratio` before choosing a
+list. Missing bodies and dropped analytics are not in these denominators. `non_json` is a marker,
+not an ignore candidate. SQL uses PostHog's supported [JSON/array functions](https://posthog.com/docs/sql/clickhouse-functions).
+
+```sql
+WITH observed AS (
+    SELECT properties.endpoint_id AS endpoint_id,
+           properties.sole_path AS sole_path,
+           toInt(properties.path_count) AS path_count,
+           properties.truncated = true AS truncated,
+           JSONExtract(ifNull(toString(properties.changed_paths), '[]'), 'Array(String)') AS paths
+    FROM events
+    WHERE event = 'archive_change_observed'
+      AND timestamp >= now() - INTERVAL 7 DAY
+), totals AS (
+    SELECT endpoint_id, count() AS changes,
+           countIf(path_count = 1) / count() AS endpoint_sole_ratio,
+           countIf(truncated) / count() AS truncated_ratio
+    FROM observed GROUP BY endpoint_id
+), per_path AS (
+    SELECT endpoint_id, path, count() AS path_changes,
+           countIf(sole_path = path) AS sole_changes
+    FROM (SELECT endpoint_id, sole_path, arrayJoin(paths) AS path FROM observed)
+    GROUP BY endpoint_id, path
+)
+SELECT totals.endpoint_id, totals.changes, per_path.path,
+       per_path.path_changes / totals.changes AS path_ratio,
+       per_path.sole_changes / totals.changes AS sole_change_ratio,
+       totals.endpoint_sole_ratio, totals.truncated_ratio
+FROM totals LEFT JOIN per_path ON totals.endpoint_id = per_path.endpoint_id
+ORDER BY totals.changes DESC, path_ratio DESC, per_path.path
+```
+
+
+## JSON comparison and declared ignore paths
+
+Every retained caller/refresh response uses `_ignored_matches`, even with no `cache.ignore_paths`.
+`_normalized_hash` parses a private JSON copy, deletes only declared paths, then hashes JSON with
+sorted object keys and compact separators. Array order, length, types and unignored values remain
+significant. Duplicate object keys, numbers whose parsing would lose precision, invalid JSON and
+unavailable bodies fall back to raw byte hashes. The original bytes, content hash, deduplication,
+history and served response never change.
+
+`cache.ignore_paths` is optional and empty by default; only explicit declarations exclude fields.
+Hunter declares `data.verification.date` for `hunter.people.email.find` and
+`data.emails[*].verification.date` for `hunter.companies.emails`. Date-only changes no longer shrink
+TTL, but mailbox values, scores, verification statuses and found/empty transitions remain significant.
+Other pilot endpoints declare no ignored fields, including Findymail's `contact.id`.
+A comparison-only mapping does not override retention policy or assert vendor licensing permission.
+There is no automatic field selection; `ArchiveKey.volatile_paths` remains unused.
+
+Path segments can begin with digits, and `[*]` selects array elements. Missing paths are no-ops.
+Deleting `items[*].request_id` keeps all elements; deleting `items[*]` deletes the array contents.
+Comparison has no six-level reporting limit and never uses reported/truncated paths as policy.
+
+`_ignored_matches` preloads at most the latest and decisive snapshot bodies before the DB write.
+It skips body reads for identical raw hashes. Pointer sessions close before object I/O. The pre-read
+uses the shared archive semaphore and a three-second budget, separate from the write deadline.
+Only matched snapshot IDs are passed to `_store_locked`; a concurrently changed baseline falls
+back to raw hashes without holding a row lock across I/O or adding a reconciliation write.
+`ignore_body_unavailable` and `ignore_comparison_failed` retain their diagnostic names for both
+default JSON comparison and explicit field exclusions. Reporting can be disabled independently;
+TTL comparison remains active.
+
+`changed_paths` and `masked_by_ignore` describe the baseline actually used for learning. The latter
+now covers default normalization as well as declared paths. Result-aware endpoints use their
+last decisive found/empty snapshot across unknown/error responses; legacy endpoints use the latest.
+Repeated empty results do not learn or emit change events. Ignore rules never relax admission,
+mask found/empty transitions or alter cache billing. Existing TTLs/counters are not backfilled by
+deployment; production operator caps bound served age independently of historical learned TTL.
+
+
+## Leadsforge email cache pilot
+
+`leadsforge.people.email.find` uses strict result admission: a `succeeded` response needs a
+nonempty email string with a basic mailbox/domain shape; `not_found` without an email is empty.
+Other status/field combinations are unknown and cannot serve. This is result validation, not
+mailbox deliverability verification. Historical bytes remain unchanged and are reclassified on lookup.
+
+`TREG_ARCHIVE_SERVE_MAX_AGE_S` is a JSON mapping of exact endpoint IDs to positive integer
+seconds (empty by default). It is an operator freshness ceiling, independent of vendor declarations.
+Lookup takes the minimum of the learned TTL, vendor ceiling, operator ceiling and caller max-age;
+`TTL_NEVER` remains authoritative. The refresh worker also respects the operator ceiling for its
+80% due threshold. It does not reset or rewrite historical learning counters. `/admin/archive`
+reports `serve_max_age_s` so operators can verify the running configuration. The global team cohort
+percentage is unchanged. Production pilot values and rollback live in treg-internal.

@@ -160,6 +160,12 @@ some JSON. The [local proxy](../architecture/local-proxy.md) needs that distinct
 without ever rewriting a real vendor response. `application.call` failures carry a mechanism `kind`
 and separately mapped `blame`; the compatibility header remains the literal `1`.
 
+`response_buffer_limit` is a treg-attributed 502 with a structured `detail.error` of the same
+name. It means response evidence exceeded the 8 MiB settlement buffer before delivery; the new
+call is not charged and its hold/idempotency claim is released. Authorized free final GET fetches
+needing no body evidence stream without that limit and return zero cost; their retries read the
+provider again. See `proxy-model.md` for the eligibility and close-once lifecycle.
+
 Resolution refusals are actionable: a named miss that resembles one of the caller's usable own tools
 returns a structured `detail` with `hint` and `did_you_mean`, including after a real catalog endpoint
 falls through and finds no usable marketplace credential. A genuine URL-passthrough tie returns 409
@@ -210,7 +216,7 @@ validated before resolving the shared HTTP client. `/auth/logout` remains an HTT
   stamp `Org.ad_gclid`/`ad_click_id_type`/`ad_landing`/`ad_click_at` on the new org when present - see
   [ads-conversions](../architecture/ads-conversions.md).
   `create_org` (`POST /orgs`, `require_identity` so a
-  zero-org user can make their first team) + `list_orgs` (`GET /orgs`,
+  zero-org user can make their first team; HTTP 403 when already owning 10 teams) + `list_orgs` (`GET /orgs`,
   each org carries a `tool_count` - one grouped query - so the dashboard can land on the org with tools;
   its `active` flag follows `require_member`'s precedence - per-org membership token, else `X-Treg-Org`,
   else a team-pinned identity token's own `org` claim - so `treg login --token <pinned key>` lands on the

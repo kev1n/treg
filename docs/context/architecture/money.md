@@ -182,6 +182,12 @@ marketing expense and never refundable; purchased credit is a deferred-revenue l
 refundable and disputable - so spending promo first keeps the refundable pool as small as possible
 for as long as possible.
 
+`_consume_blocks` acquires `CreditBlock` row locks with `ORDER BY CreditBlock.id FOR UPDATE`.
+The unique primary-key order is shared by concurrent settlements and prevents opposite scan-order
+locking. It is independent of consumption priority: the subsequent `blocks.sort` still selects
+promotional credit first, then age and ID. Keep both the row lock (which prevents lost deductions)
+and that business sort. This is the repository's sole explicit CreditBlock row-lock query.
+
 **Margin is applied inside the module** (`with_margin`), at reserve AND settle, and the rate in force
 is recorded on every entry - so a rate change cannot retroactively rewrite what a call cost, and two
 call sites cannot disagree.
@@ -240,7 +246,7 @@ An authorized platform poll with an explicit `free` price and zero estimate is
 `_platform_settle`, including their spend checks, stale-hold sweep, auto-top-up scheduling and all
 new poll Hold/LedgerEntry/TagSpend writes. Ordinary authorization, usage limits and provider rate smoothing
 still apply. Its response reports `X-Treg-Cost-Micro: 0`; the original submission's hold remains
-owned by the original task and may close on this poll's terminal evidence. This exception does not cover fetch utilities, BYOK,
+owned by the original task and may close on this poll's terminal evidence. This no-new-hold exception does not cover fetch utilities, BYOK,
 billed OAuth, or a zero estimate on a paid endpoint.
 A 2xx that is not an accepted submission (not JSON, fails the endpoint's `expect` rule, or carries
 no task id / an off-allow-list poll URL: `application.call.service._submission_rejected`) never
@@ -504,9 +510,18 @@ so the reserve IS the charge: a wrong entity count is a wrong bill, not a hold t
 The estimate is never a substitute for an available response-derived charge.
 
 `_platform_settle` uses its own short session and never turns a served response into a 500.
-A pool timeout gets one retry after 0.5 s; other failures are logged and the remaining hold goes
-to the reaper. The request session must be committed before relay so settlement cannot wait on
-a connection held by that same request. See [connection discipline](proxy-model.md#connection-discipline-a-call-in-flight-holds-no-db-connection).
+A pool timeout or PostgreSQL deadlock gets one retry after the existing 0.5 s delay. Deadlocks are
+identified as SQLAlchemy `DBAPIError` with `orig.sqlstate == "40P01"`, including asyncpg's adapted
+exception; error messages are never matched. The failed session closes and rolls back before the
+whole settlement/release transaction is retried in a fresh session, including any overflow spend.
+A second failure or an unrelated DB error is logged, leaves the hold for the reaper and preserves
+the upstream response. No upstream retry, new timeout or additional ledger operation is introduced.
+Tests inspect both concurrent settlements' compiled PostgreSQL lock order and verify consumption
+priority; SQLite cannot exercise row locks. PostgreSQL runs exercise concurrent settlements and
+real driver-wrapped SQLSTATE injection after staged writes, checking rollback and retry exhaustion.
+SQLSTATE injection tests recovery, not the production planner's original deadlock schedule.
+
+The request session must be committed before relay so settlement cannot wait on a connection held by that same request. See [connection discipline](proxy-model.md#connection-discipline-a-call-in-flight-holds-no-db-connection).
 
 ## Shared-plan pricing: flat-fee providers, and the rate treg sets
 
@@ -885,3 +900,16 @@ values into the top-up ledger metadata and `topup_completed`, under the existing
 guard; webhook order and sequential redelivery do not change attribution or duplicate events.
 Missing/legacy attribution is `unknown`. No query inputs, URLs, API keys or provider results are
 copied into this metadata. Amounts, reservations, settlement and payment authorization are unchanged.
+
+## Response evidence size and free final downloads
+
+Settlement evidence must be complete. The call application's 8 MiB buffer raises a typed 502 on
+overflow and closes upstream; the failed call releases its reservation and idempotency claim.
+Partial JSON must not silently fall back to an estimate or be settled as a success. The original
+async submission's hold remains independent of a failing free status poll.
+
+An authorized, explicitly free final result GET with no body evidence consumers streams without
+buffering (`MarketplaceCall.streamable_free_result`). It retains the existing zero-amount
+reserve/settle gates and settles with an explicit zero override before returning the stream. It
+does not observe the original generation task or persist a response for idempotent replay; the
+label is released and retrying performs another free read. MIME type never decides billability.

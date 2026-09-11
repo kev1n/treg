@@ -381,7 +381,8 @@ async def admin_archive(
     import time as _time
     hit = _archive_report_cache.get(top)
     if hit and _time.monotonic() - hit[0] < _ARCHIVE_REPORT_TTL_S:
-        return hit[1]
+        return hit[1] | {"change_outcomes": dict(archive_mod.change_outcomes),
+                         "body_outcomes": dict(archive_mod.archive_bodies.outcomes)}
 
     stats = (await db.execute(
         select(ArchiveEndpointStat)
@@ -420,10 +421,13 @@ async def admin_archive(
             "kept_bytes": st.kept_bytes,
         })
     report = {"mode": archive_mod.mode(),
-              "comparison_mode": "strict",
+              "change_outcomes": dict(archive_mod.change_outcomes),
+              "body_outcomes": dict(archive_mod.archive_bodies.outcomes),
+              "comparison_mode": "json",
               "ttl_policy": "adaptive",
               "serve_endpoints": sorted(archive_mod.serve_endpoints()),
               "serve_percent": get_settings().archive_serve_percent,
+              "serve_max_age_s": get_settings().archive_serve_max_age_s,
               # Cumulative counters include observations from older comparison policies.
               "change_statistics_scope": "lifetime_mixed_comparison_modes",
             "worker_on": archive_mod.worker_enabled(),
