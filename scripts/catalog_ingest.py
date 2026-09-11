@@ -157,11 +157,17 @@ def core_routes(provider: str) -> set[tuple[str, str]]:
     }
 
 
-def carry_verification(provider: str, endpoints: list[dict], *, carry_capability: bool = True) -> int:
+def carry_verification(provider: str, endpoints: list[dict], *, carry_capability: bool = True,
+                       carry_input: bool = True) -> int:
     """Re-attach reviewed fields from the extended file being replaced.
 
     Those fields are the only ones NOT derived from upstream: verification stamps are the result
-    of an actual paid call made by scripts/catalog_verify_extended.py. `name` (the short display
+    of an actual paid call made by scripts/catalog_verify_extended.py.
+
+    `carry_input=False` for a provider that publishes a machine-readable request schema. Carrying
+    `input` freezes a generated row's parameters at the revision that first created it, and no
+    later re-ingest can refresh them: 36 AnyAPI rows lost `cursor` that way and could not be
+    paginated from the catalog, while sibling rows generated later carried it. `name` (the short display
     title) and `kind` (data | action | account | utility - a reviewed judgement the ingest cannot
     re-derive) are carried on the same guard. A provider may also carry reviewed `capability`
     mappings; AIGC coverage ingesters disable that option because comparison membership belongs
@@ -197,9 +203,11 @@ def carry_verification(provider: str, endpoints: list[dict], *, carry_capability
             "verified", "example_response", "unverified", "name", "kind", "platform_blocked",
             # Meta publishes no machine-readable request schema or grant matrix. These contracts
             # are reviewed against its HTML docs and must survive the next deterministic ingest.
-            "input", "authorization_method", "authorization_methods", "authorization_paths",
+            "authorization_method", "authorization_methods", "authorization_paths",
             "required_scopes", "required_resource", "token_type",
         ]
+        if carry_input:
+            carried_fields.append("input")
         if carry_capability:
             carried_fields.append("capability")
         for field in carried_fields:
@@ -217,8 +225,9 @@ def carry_verification(provider: str, endpoints: list[dict], *, carry_capability
 
 
 def write_extended(provider: str, source: dict, endpoints: list[dict], notes: list[str],
-                   *, carry_capability: bool = True) -> Path:
-    carried = carry_verification(provider, endpoints, carry_capability=carry_capability)
+                   *, carry_capability: bool = True, carry_input: bool = True) -> Path:
+    carried = carry_verification(provider, endpoints, carry_capability=carry_capability,
+                                 carry_input=carry_input)
     if carried:
         print(f"  carried {carried} verification stamp(s) forward", file=sys.stderr)
     endpoints = sorted(endpoints, key=lambda e: (e["platform"], e["path"], e["method"]))
@@ -1327,7 +1336,7 @@ ANYAPI_SKIP_PARAMS = {"preferLatencyUnderMs", "requireCursor", "requireSinglePag
 ANYAPI_RATE_CARD = "https://api.getanyapi.com/v1/apis?limit=1000"
 ANYAPI_OPENAPI = "https://api.getanyapi.com/openapi.json"
 # Bumped by hand when the rate card is re-read, so a re-run with no price change is byte-identical.
-ANYAPI_CHECKED = "2026-09-09"
+ANYAPI_CHECKED = "2026-09-10"
 
 # What AnyAPI actually billed, per SKU, over the trailing 60 days: a hand-exported snapshot of the
 # vendor's own request ledger (calls, p50, p90, max USD), the same arrangement as
@@ -1373,6 +1382,17 @@ def _anyapi_measured() -> dict[str, dict]:
     return _ANYAPI_MEASURED
 
 
+def _anyapi_measured_window() -> tuple[str, int]:
+    """The ledger export's own window, which is NOT the rate-card read date.
+
+    ANYAPI_CHECKED moves whenever the rate card is re-read; the measured window only moves when
+    the ledger is re-exported. Reusing one date for both made a re-read silently restate every
+    measured price as covering days it never saw.
+    """
+    blob = json.loads(ANYAPI_MEASURED_FILE.read_text()) if ANYAPI_MEASURED_FILE.is_file() else {}
+    return blob.get("as_of", ANYAPI_CHECKED), blob.get("window_days", 60)
+
+
 def _anyapi_input(schema: dict, example: dict) -> dict:
     """AnyAPI publishes one strict JSON Schema per SKU; carry it across verbatim minus the
     routing controls, so a generated `test_request` is built from the vendor's own examples."""
@@ -1416,6 +1436,12 @@ def _anyapi_cost(api: dict) -> dict:
     same 60 days under the OLD, much-worse prices, that overrun was $18.66 on $695.05 settled -
     2.7%. The listing prices for the buyer comparing shelves, not for the reserve.
 
+    A measured price is clamped to `failoverMaxUsd` at BOTH ends. The floor is _anyapi_flat_floor
+    below. The ceiling is the dearest source's price at the input maximum, so no request can settle
+    above it: a p90 that lands higher is quoting a source AnyAPI has since withdrawn, and the row
+    would otherwise say "$0.0036 ... up to a $0.0012 ceiling" in one sentence. That was 21 of the
+    201 rows in an earlier revision of this branch, the worst at 3x its own ceiling.
+
     `source: observed` is this catalog's own word for a price seen being billed rather than read
     off a page (domain/catalog/store.COST_SOURCES); the rate-card fallback keeps `rate_card_api`.
     `reported_charge` stays on every row either way: `costUsd` is the only number that knows which
@@ -1426,6 +1452,7 @@ def _anyapi_cost(api: dict) -> dict:
     price = measured["p90_usd"] if measured else api["pricing"]["from"]["maxUsd"]
     if measured:
         price = max(price, _anyapi_flat_floor(api))
+        price = min(price, api["pricing"].get("failoverMaxUsd") or price)
     return {
         "type": "per_success",
         "value": price,
@@ -1457,22 +1484,41 @@ def _anyapi_flat_floor(api: dict) -> float:
     pricing = (api.get("pricing") or {}).get("from") or {}
     return pricing.get("maxUsd", 0.0) if pricing.get("model") == "flat" else 0.0
 
-def anyapi_price_basis(sku: str) -> str:
+def anyapi_price_basis(sku: str, api: dict | None = None) -> str:
     """One sentence naming where this row's price came from, for the row's own `note`.
 
     Core rows are hand-curated but priced by the same rule, so this is shared rather than copied.
+    Pass `api` (the rate-card row) to have a clamped price say so: a p90 is a statistic over a
+    trailing window, and a row whose note claims a $0.002 median while charging $0.0012 reads as a
+    contradiction rather than as the correction it is.
     """
     if sku in ANYAPI_CORE_ROWS_PRICED_AT_CHEAPEST_SOURCE:
         return ("Price is the cheapest source's advertised price, because the sources that "
                 "serve this endpoint charge very different amounts for the same number of "
                 "results; a rescue on a dearer source settles above it.")
+    as_of, days = _anyapi_measured_window()
     m = _anyapi_measured().get(sku)
     if m:
-        return ("Price is the p90 of what AnyAPI really charged for this endpoint over the 60 days "
-                f"to {ANYAPI_CHECKED} ({m['calls']} charged calls, ${m['p50_usd']:g} median), not "
-                "a list price; roughly one call in ten settles above it.")
-    return (f"Too few charged calls in the 60 days to {ANYAPI_CHECKED} to measure, so the price is "
+        basis = (f"Price is the p90 of what AnyAPI really charged for this endpoint over the {days} "
+                 f"days to {as_of} ({m['calls']} charged calls, ${m['p50_usd']:g} median), not "
+                 "a list price; roughly one call in ten settles above it.")
+        return basis + (_anyapi_clamp_clause(m["p90_usd"], api) if api else "")
+    return (f"Too few charged calls in the {days} days to {as_of} to measure, so the price is "
             "the live rate card's cheapest source at the input maximum.")
+
+
+def _anyapi_clamp_clause(p90: float, api: dict) -> str:
+    """The sentence a clamped measured price owes the reader, or nothing when it was not clamped."""
+    ceiling = (api.get("pricing") or {}).get("failoverMaxUsd")
+    floor = _anyapi_flat_floor(api)
+    if ceiling and p90 > ceiling:
+        return (f" That p90 is capped here at ${ceiling:g}, the dearest price any source can charge "
+                "for this request today: the dearer source it measured has since been withdrawn, so "
+                "no call can settle at the p90 any more.")
+    if floor > p90:
+        return (f" That p90 is raised here to ${floor:g}, today's cheapest advertised price, because "
+                "the cheaper source it measured has since been withdrawn.")
+    return ""
 
 
 def ingest_anyapi(refresh: bool = False):
@@ -1527,7 +1573,7 @@ def ingest_anyapi(refresh: bool = False):
         lanes = len(api.get("lanes") or [])
         ceiling = api["pricing"]["failoverMaxUsd"]
         ep["note"] = (
-            f"AnyAPI slug `{sku}`. {anyapi_price_basis(sku)} "
+            f"AnyAPI slug `{sku}`. {anyapi_price_basis(sku, api)} "
             f"{lanes} source{'s' if lanes != 1 else ''} can serve it; the "
             f"cheapest serves first and a failed attempt is retried on the next, up to a "
             f"${ceiling:g} ceiling per request. `costUsd` on the response is the exact charge, "
@@ -1549,7 +1595,7 @@ def ingest_anyapi(refresh: bool = False):
         "says so in its note (cost.source: rate_card_api vs observed). One call in ten settles",
         "ABOVE the reserve by design; every response reports its exact charge as costUsd, which is",
         "what reported_charge settles on.",
-    ], carry_capability=True)
+    ], carry_capability=True, carry_input=False)
     return out, {"endpoints": len(endpoints)}
 
 
