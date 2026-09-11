@@ -636,8 +636,8 @@ drop reasons, leader timing, and duplicate statuses after rollout before increas
 
 ## Change observation
 
-After `_store_locked` commits, `_observe_change` reports a byte-hash change from the immediately
-preceding snapshot for `caller` and `refresh` origins only. Cache hits and async terminal evidence
+After `_store_locked` commits, `_observe_change` reports a byte-hash change from the baseline
+that actually drove TTL learning for `caller` and `refresh` origins only. Cache hits and async terminal evidence
 never emit `archive_change_observed`. The background task has a separate three-second observation
 budget after the existing 30-second DB stage. Failure cannot undo or prevent the recording.
 `_read_change_body` collects an `archive_bodies.pointer` in a short background session, closes it,
@@ -668,8 +668,8 @@ Non-JSON pairs use `changed_paths: [non_json]`, `path_count: 1`, `leaf_count: 0`
 Analytics emits `archive_change_observed` with distinct ID `archive` and only `endpoint_id`,
 `provider`, `changed_paths`, `path_count`, `truncated`, `leaf_count`, `sole_path` and
 `masked_by_ignore` (true only when a declared ignore comparison actually rescues a stable TTL
-decision). The path report compares the latest historical snapshot; result-aware TTL can instead
-compare an older decisive found snapshot across intervening unknown/error observations. No values, body
+decision). The path report uses that same TTL baseline, including an older decisive snapshot
+across intervening unknown/error observations for result-aware endpoints. No values, body
 snippets, call references or key identities are sent. Paths are structural property names from JSON;
 these reports are not a schema or evidence that a field is safe to ignore. Observation is read-only
 and does not alter admission, learning, stored bytes, deduplication or serving.
@@ -743,9 +743,11 @@ returns exactly the retained answer; the learned expiration can change only for 
 Read/analysis failures preserve strict comparison. No schema migration, new DB write, serving
 allowlist change, production configuration, field selection UI or automated ignore proposal ships.
 
-Known deferred limitation: `changed_paths` compares the immediately previous snapshot, while
-`masked_by_ignore` can refer to a different decisive baseline. No endpoint currently declares
-ignore paths, so the latter is always false. **This must be fixed before the first ignore list
-is introduced.** This delivery only documents the mismatch; it does not change snapshot pairing.
+`changed_paths` and `masked_by_ignore` describe the same pair: the new body and the baseline
+used for its stable/changed TTL decision. Result-aware endpoints use the decisive found/empty
+snapshot, skipping intervening unknown/error evidence; legacy endpoints use the previous snapshot.
+Observations without a learning decision (including repeated empty results) emit no change event.
+The baseline ID is captured during recording; its pointer and bytes are read afterward under the
+existing session discipline, without adding DB writes.
 
 Ignore-path segments may begin with digits, e.g. `2fa_enabled` or `data.123status`.

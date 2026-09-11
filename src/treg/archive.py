@@ -882,6 +882,7 @@ async def _store_locked(
         previous_state = key.result_state if result_aware else "found"
         next_state = result.state if result_aware else "found"
         masked_by_ignore = False
+        comparison_baseline = None
         decisive = next_state in ("found", "empty") and origin != "async_terminal"
         if decisive and baseline is not None and (previous_state, next_state) != ("empty", "empty"):
             stable = previous_state == next_state == "found" and (
@@ -893,6 +894,9 @@ async def _store_locked(
                 key.change_seen += 1
                 key.last_changed_at = now
             learn(key, stable=stable, entry=entry)
+            # Both event properties must describe the pair that drove TTL learning. The
+            # newest row may only be intervening unknown/error evidence, not this baseline.
+            comparison_baseline = baseline
         key.fetched_at, key.policy = now, pol
         if origin == "caller":     # a refresh is treg asking itself — never demand
             key.last_requested_at = now
@@ -911,8 +915,9 @@ async def _store_locked(
             stable_d=key.stable_seen - seen_before[0], changed_d=key.change_seen - seen_before[1],
             kept=plan.storage is not None, size=len(body), now=now)
         await s.commit()
-        return ((newest.id, masked_by_ignore) if newest is not None and newest.content_hash != ch
-                and plan.storage is not None and _has_change_body(newest)
+        return ((comparison_baseline.id, masked_by_ignore)
+                if comparison_baseline is not None and comparison_baseline.content_hash != ch
+                and plan.storage is not None and _has_change_body(comparison_baseline)
                 and get_settings().archive_change_observation_enabled
                 and origin in ("caller", "refresh") else None)
 
