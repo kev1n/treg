@@ -751,3 +751,19 @@ The baseline ID is captured during recording; its pointer and bytes are read aft
 existing session discipline, without adding DB writes.
 
 Ignore-path segments may begin with digits, e.g. `2fa_enabled` or `data.123status`.
+
+
+## Leadsforge email cache pilot
+
+`leadsforge.people.email.find` uses strict result admission: a `succeeded` response needs a
+nonempty email string with a basic mailbox/domain shape; `not_found` without an email is empty.
+Other status/field combinations are unknown and cannot serve. This is result validation, not
+mailbox deliverability verification. Historical bytes remain unchanged and are reclassified on lookup.
+
+`TREG_ARCHIVE_SERVE_MAX_AGE_S` is a JSON mapping of exact endpoint IDs to positive integer
+seconds (empty by default). It is an operator freshness ceiling, independent of vendor declarations.
+Lookup takes the minimum of the learned TTL, vendor ceiling, operator ceiling and caller max-age;
+`TTL_NEVER` remains authoritative. The refresh worker also respects the operator ceiling for its
+80% due threshold. It does not reset or rewrite historical learning counters. `/admin/archive`
+reports `serve_max_age_s` so operators can verify the running configuration. The global team cohort
+percentage is unchanged. Production pilot values and rollback live in treg-internal.

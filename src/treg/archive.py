@@ -1206,6 +1206,9 @@ async def lookup(
             cap = declared_max_age_s(entry)
             if cap is not None:
                 window = min(window, cap)
+            operator_cap = get_settings().archive_serve_max_age_s.get(endpoint_id)
+            if operator_cap is not None:
+                window = min(window, operator_cap)
             if wanted is not None:
                 window = min(window, wanted)
             if window <= 0:
@@ -1382,6 +1385,9 @@ async def refresh_once(client) -> int:
         if not storable(entry):
             continue  # judgment changed since recording — never refresh what may not be kept
         window = key.ttl_s if key.ttl_s > 0 else ttl_for(entry)
+        operator_cap = get_settings().archive_serve_max_age_s.get(key.endpoint_id)
+        if operator_cap is not None:
+            window = min(window, operator_cap)
         age = (now - key.fetched_at).total_seconds()
         demanded = key.last_requested_at is not None and key.last_requested_at > key.fetched_at
         if age < window * _DUE_SHARE or not demanded:
