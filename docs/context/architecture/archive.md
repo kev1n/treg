@@ -277,6 +277,10 @@ statistics — only `last_requested_at` (fire-and-forget `_touch`), the demand s
 Freshness (phase 1) is `archive.ttl_for(entry)`: FIXED guesses per capability prefix
 (`crypto.price` 5 min, `web.search` 1 h, `people.`/`company.` 7 d, default 1 h), always capped by
 a judged `cache.max_age_s` (CoinGecko's 24 h duty). The learner (PR 5) replaces these per key.
+`declared_max_age_s()` supplies the vendor ceiling to defaults, learning and lookup. Serving
+caps even an already-learned positive TTL by that declaration, then by caller `X-Treg-Max-Age`.
+Without a declared ceiling, learned TTLs can exceed capability defaults; lookup never uses the
+static default to cap a positive learned TTL.
 
 Caller controls, always honored: `Cache-Control: no-cache`/`no-store` forces a live call (the
 read-after-write escape — the archive never guesses cross-endpoint effects); `X-Treg-Max-Age`

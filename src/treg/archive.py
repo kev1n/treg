@@ -1094,6 +1094,18 @@ _TTL_DEFAULTS: tuple[tuple[str, int], ...] = (
 DEFAULT_TTL_S = 3600
 
 
+def declared_max_age_s(entry: dict[str, Any] | None) -> int | None:
+    """Vendor ceiling only; static capability defaults must not cap learned TTLs."""
+    declared = (entry or {}).get("cache")
+    if not isinstance(declared, dict):
+        return None
+    try:
+        cap = int(declared.get("max_age_s") or 0)
+    except (TypeError, ValueError):
+        return None
+    return cap if cap > 0 else None
+
+
 def ttl_for(entry: dict[str, Any] | None) -> int:
     """The phase-1 freshness window for one endpoint, in seconds. Longest matching capability
     prefix from the fixed table (else the 1-hour default), always capped by the vendor's own
@@ -1104,14 +1116,9 @@ def ttl_for(entry: dict[str, Any] | None) -> int:
     for prefix, seconds in _TTL_DEFAULTS:
         if capability.startswith(prefix) and len(prefix) > best:
             best, ttl = len(prefix), seconds
-    declared = (entry or {}).get("cache")
-    if isinstance(declared, dict):
-        try:
-            cap = int(declared.get("max_age_s") or 0)
-        except (TypeError, ValueError):
-            cap = 0
-        if cap > 0:
-            ttl = min(ttl, cap)
+    cap = declared_max_age_s(entry)
+    if cap is not None:
+        ttl = min(ttl, cap)
     return ttl
 
 
@@ -1191,6 +1198,9 @@ async def lookup(
             if key.ttl_s == TTL_NEVER:
                 return miss("ttl_disabled")
             window = key.ttl_s if key.ttl_s > 0 else ttl_for(entry)
+            cap = declared_max_age_s(entry)
+            if cap is not None:
+                window = min(window, cap)
             if wanted is not None:
                 window = min(window, wanted)
             if window <= 0:
@@ -1281,14 +1291,9 @@ def learn(key, *, stable: bool, entry: dict[str, Any] | None) -> None:
     change (×0.5, floored). The vendor's declared ceiling always caps; a key that only ever
     changes marks itself TTL_NEVER and is never served again until a stable refetch resets it."""
     ceiling = TTL_CEILING_S
-    declared = (entry or {}).get("cache")
-    if isinstance(declared, dict):
-        try:
-            cap = int(declared.get("max_age_s") or 0)
-        except (TypeError, ValueError):
-            cap = 0
-        if cap > 0:
-            ceiling = min(ceiling, cap)
+    cap = declared_max_age_s(entry)
+    if cap is not None:
+        ceiling = min(ceiling, cap)
     current = key.ttl_s if key.ttl_s > 0 else ttl_for(entry)
     if stable:
         key.ttl_s = min(int(current * 1.5), ceiling)
