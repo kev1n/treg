@@ -13,7 +13,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
-from conftest import make_upstream
+from conftest import drain_background_writes, make_upstream
 
 from treg import sandbox
 from treg.routers.onboard import SANDBOX_RATE_MAX
@@ -26,11 +26,15 @@ from treg.models import Secret, Tool, User
 async def anon():
     """A fresh, UNAUTHENTICATED client + clean rate-limit state (the mint endpoint is the anon door).
     reset_db() also clears the DB-backed sandbox throttle (the `ephemeral` table)."""
+    await drain_background_writes()
     await reset_db()
     app.state.http = AsyncClient(transport=ASGITransport(app=make_upstream()), base_url="http://upstream")
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://registry") as c:
-        yield c
-    await app.state.http.aclose()
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://registry") as c:
+            yield c
+    finally:
+        await drain_background_writes()
+        await app.state.http.aclose()
 
 
 def _h(tok: str) -> dict:
