@@ -968,6 +968,78 @@ endpoints:
     confidence: verified
   docs_url: https://getanyapi.com/api/facebook/search-posts
   note: AnyAPI slug `facebook.search_posts`. Price is the p90 of what AnyAPI really charged for this endpoint over the 60 days to 2026-09-09 (443 charged calls, $0.03306 median), not a list price; roughly one call in ten settles above it. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.0661 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
+- id: anyapi.ahrefs.keyword_ideas
+  tier: extended
+  platform: google
+  domain: keyword
+  method: POST
+  path: /v1/run/ahrefs.keyword_ideas
+  name: Ahrefs Keyword Ideas
+  summary: Get related keyword suggestions for any seed term, each with an Ahrefs difficulty and search-volume bucket.
+  input:
+    body:
+      country:
+        type: string
+        required: false
+        note: Two-letter country code that scopes the suggestions (e.g. us, gb, de).
+        default: us
+        example: us
+      keyword:
+        type: string
+        required: true
+        note: The seed keyword to expand into related suggestions (e.g. "coffee").
+        example: coffee
+    bodyType: json
+  cost:
+    type: per_success
+    value: 0.0215
+    currency: USD
+    unit: call
+    reported_charge:
+      path: costUsd
+      unit: usd
+    source: rate_card_api
+    source_url: https://api.getanyapi.com/v1/apis/ahrefs.keyword_ideas
+    checked: '2026-09-09'
+    confidence: verified
+  docs_url: https://getanyapi.com/api/ahrefs/keyword-ideas
+  note: AnyAPI slug `ahrefs.keyword_ideas`. Too few charged calls in the 60 days to 2026-09-09 to measure, so the price is the live rate card's cheapest source at the input maximum. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.0215 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
+- id: anyapi.ahrefs.keywords
+  tier: extended
+  platform: google
+  domain: keywords
+  method: POST
+  path: /v1/run/ahrefs.keywords
+  name: Ahrefs Keyword Difficulty
+  summary: 'Get the Ahrefs keyword-difficulty metrics for any search term: the difficulty score (0-100) and the number of referring domains a page needs to rank in the top 10 - as normalized JSON.'
+  input:
+    body:
+      country:
+        type: string
+        required: false
+        note: Two-letter country code that scopes volume and difficulty (e.g. us, gb, de).
+        default: us
+        example: us
+      keyword:
+        type: string
+        required: true
+        note: The search term to analyze (e.g. "seo tools").
+        example: seo tools
+    bodyType: json
+  cost:
+    type: per_success
+    value: 0.02145
+    currency: USD
+    unit: call
+    reported_charge:
+      path: costUsd
+      unit: usd
+    source: observed
+    source_url: https://api.getanyapi.com/v1/apis/ahrefs.keywords
+    checked: '2026-09-09'
+    confidence: verified
+  docs_url: https://getanyapi.com/api/ahrefs/keywords
+  note: AnyAPI slug `ahrefs.keywords`. Price is the p90 of what AnyAPI really charged for this endpoint over the 60 days to 2026-09-09 (25 charged calls, $0.02145 median), not a list price; roughly one call in ten settles above it. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.0215 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
 - id: anyapi.google.ai_mode
   tier: extended
   platform: google
@@ -1391,6 +1463,83 @@ endpoints:
     confidence: verified
   docs_url: https://getanyapi.com/api/maps/contacts
   note: AnyAPI slug `maps.contacts`. Price is the p90 of what AnyAPI really charged for this endpoint over the 60 days to 2026-09-09 (475 charged calls, $0.03966 median), not a list price; roughly one call in ten settles above it. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.0991 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
+- id: anyapi.semrush.keywords
+  tier: extended
+  platform: google
+  domain: keywords
+  method: POST
+  path: /v1/run/semrush.keywords
+  name: Semrush Keyword Research
+  summary: 'Semrush keyword research for any term: monthly search volume, CPC, competition, keyword difficulty, plus related keywords and question keywords.'
+  input:
+    body:
+      database:
+        type: string
+        required: false
+        note: Two-letter Semrush regional database that scopes the metrics (e.g. us, uk, de).
+        default: us
+        example: us
+      keyword:
+        type: string
+        required: true
+        note: The search term to research (e.g. "best running shoes").
+        example: best running shoes
+    bodyType: json
+  cost:
+    type: per_success
+    value: 0.0165
+    currency: USD
+    unit: call
+    reported_charge:
+      path: costUsd
+      unit: usd
+    source: observed
+    source_url: https://api.getanyapi.com/v1/apis/semrush.keywords
+    checked: '2026-09-09'
+    confidence: verified
+  docs_url: https://getanyapi.com/api/semrush/keywords
+  note: AnyAPI slug `semrush.keywords`. Price is the p90 of what AnyAPI really charged for this endpoint over the 60 days to 2026-09-09 (60 charged calls, $0.0165 median), not a list price; roughly one call in ten settles above it. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.0165 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
+- id: anyapi.semrush.overview
+  tier: extended
+  platform: google
+  domain: overview
+  method: POST
+  path: /v1/run/semrush.overview
+  name: Semrush Domain Overview
+  summary: 'a Semrush SEO overview for any domain: Authority Score, organic and paid traffic, keyword and backlink counts, top country, and the domain''s top organic keywords.'
+  input:
+    body:
+      database:
+        type: string
+        required: false
+        note: Two-letter Semrush regional database that scopes the metrics (e.g. us, uk, de).
+        default: us
+        example: us
+      domain:
+        type: string
+        required: true
+        note: The domain to analyze (e.g. ahrefs.com).
+        example: ahrefs.com
+      includeMoz:
+        type: boolean
+        required: false
+        note: Add Moz Domain Authority and Spam Score to the response.
+        default: false
+    bodyType: json
+  cost:
+    type: per_success
+    value: 0.0165
+    currency: USD
+    unit: call
+    reported_charge:
+      path: costUsd
+      unit: usd
+    source: observed
+    source_url: https://api.getanyapi.com/v1/apis/semrush.overview
+    checked: '2026-09-09'
+    confidence: verified
+  docs_url: https://getanyapi.com/api/semrush/overview
+  note: AnyAPI slug `semrush.overview`. Price is the p90 of what AnyAPI really charged for this endpoint over the 60 days to 2026-09-09 (25 charged calls, $0.0158 median), not a list price; roughly one call in ten settles above it. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.0165 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
 - id: anyapi.seo.competitors_domain
   tier: extended
   platform: google
@@ -5490,78 +5639,6 @@ endpoints:
     confidence: verified
   docs_url: https://getanyapi.com/api/ahrefs/backlinks
   note: AnyAPI slug `ahrefs.backlinks`. Price is the p90 of what AnyAPI really charged for this endpoint over the 60 days to 2026-09-09 (12 charged calls, $0.0215 median), not a list price; roughly one call in ten settles above it. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.0215 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
-- id: anyapi.ahrefs.keyword_ideas
-  tier: extended
-  platform: web
-  domain: keyword
-  method: POST
-  path: /v1/run/ahrefs.keyword_ideas
-  name: Ahrefs Keyword Ideas
-  summary: Get related keyword suggestions for any seed term, each with an Ahrefs difficulty and search-volume bucket.
-  input:
-    body:
-      country:
-        type: string
-        required: false
-        note: Two-letter country code that scopes the suggestions (e.g. us, gb, de).
-        default: us
-        example: us
-      keyword:
-        type: string
-        required: true
-        note: The seed keyword to expand into related suggestions (e.g. "coffee").
-        example: coffee
-    bodyType: json
-  cost:
-    type: per_success
-    value: 0.0215
-    currency: USD
-    unit: call
-    reported_charge:
-      path: costUsd
-      unit: usd
-    source: rate_card_api
-    source_url: https://api.getanyapi.com/v1/apis/ahrefs.keyword_ideas
-    checked: '2026-09-09'
-    confidence: verified
-  docs_url: https://getanyapi.com/api/ahrefs/keyword-ideas
-  note: AnyAPI slug `ahrefs.keyword_ideas`. Too few charged calls in the 60 days to 2026-09-09 to measure, so the price is the live rate card's cheapest source at the input maximum. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.0215 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
-- id: anyapi.ahrefs.keywords
-  tier: extended
-  platform: web
-  domain: keywords
-  method: POST
-  path: /v1/run/ahrefs.keywords
-  name: Ahrefs Keyword Difficulty
-  summary: 'Get the Ahrefs keyword-difficulty metrics for any search term: the difficulty score (0-100) and the number of referring domains a page needs to rank in the top 10 - as normalized JSON.'
-  input:
-    body:
-      country:
-        type: string
-        required: false
-        note: Two-letter country code that scopes volume and difficulty (e.g. us, gb, de).
-        default: us
-        example: us
-      keyword:
-        type: string
-        required: true
-        note: The search term to analyze (e.g. "seo tools").
-        example: seo tools
-    bodyType: json
-  cost:
-    type: per_success
-    value: 0.02145
-    currency: USD
-    unit: call
-    reported_charge:
-      path: costUsd
-      unit: usd
-    source: observed
-    source_url: https://api.getanyapi.com/v1/apis/ahrefs.keywords
-    checked: '2026-09-09'
-    confidence: verified
-  docs_url: https://getanyapi.com/api/ahrefs/keywords
-  note: AnyAPI slug `ahrefs.keywords`. Price is the p90 of what AnyAPI really charged for this endpoint over the 60 days to 2026-09-09 (25 charged calls, $0.02145 median), not a list price; roughly one call in ten settles above it. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.0215 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
 - id: anyapi.ahrefs.overview
   tier: extended
   platform: web
@@ -5601,83 +5678,6 @@ endpoints:
     confidence: verified
   docs_url: https://getanyapi.com/api/ahrefs/overview
   note: AnyAPI slug `ahrefs.overview`. Price is the p90 of what AnyAPI really charged for this endpoint over the 60 days to 2026-09-09 (580 charged calls, $0.02145 median), not a list price; roughly one call in ten settles above it. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.0215 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
-- id: anyapi.semrush.keywords
-  tier: extended
-  platform: web
-  domain: keywords
-  method: POST
-  path: /v1/run/semrush.keywords
-  name: Semrush Keyword Research
-  summary: 'Semrush keyword research for any term: monthly search volume, CPC, competition, keyword difficulty, plus related keywords and question keywords.'
-  input:
-    body:
-      database:
-        type: string
-        required: false
-        note: Two-letter Semrush regional database that scopes the metrics (e.g. us, uk, de).
-        default: us
-        example: us
-      keyword:
-        type: string
-        required: true
-        note: The search term to research (e.g. "best running shoes").
-        example: best running shoes
-    bodyType: json
-  cost:
-    type: per_success
-    value: 0.0165
-    currency: USD
-    unit: call
-    reported_charge:
-      path: costUsd
-      unit: usd
-    source: observed
-    source_url: https://api.getanyapi.com/v1/apis/semrush.keywords
-    checked: '2026-09-09'
-    confidence: verified
-  docs_url: https://getanyapi.com/api/semrush/keywords
-  note: AnyAPI slug `semrush.keywords`. Price is the p90 of what AnyAPI really charged for this endpoint over the 60 days to 2026-09-09 (60 charged calls, $0.0165 median), not a list price; roughly one call in ten settles above it. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.0165 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
-- id: anyapi.semrush.overview
-  tier: extended
-  platform: web
-  domain: overview
-  method: POST
-  path: /v1/run/semrush.overview
-  name: Semrush Domain Overview
-  summary: 'a Semrush SEO overview for any domain: Authority Score, organic and paid traffic, keyword and backlink counts, top country, and the domain''s top organic keywords.'
-  input:
-    body:
-      database:
-        type: string
-        required: false
-        note: Two-letter Semrush regional database that scopes the metrics (e.g. us, uk, de).
-        default: us
-        example: us
-      domain:
-        type: string
-        required: true
-        note: The domain to analyze (e.g. ahrefs.com).
-        example: ahrefs.com
-      includeMoz:
-        type: boolean
-        required: false
-        note: Add Moz Domain Authority and Spam Score to the response.
-        default: false
-    bodyType: json
-  cost:
-    type: per_success
-    value: 0.0165
-    currency: USD
-    unit: call
-    reported_charge:
-      path: costUsd
-      unit: usd
-    source: observed
-    source_url: https://api.getanyapi.com/v1/apis/semrush.overview
-    checked: '2026-09-09'
-    confidence: verified
-  docs_url: https://getanyapi.com/api/semrush/overview
-  note: AnyAPI slug `semrush.overview`. Price is the p90 of what AnyAPI really charged for this endpoint over the 60 days to 2026-09-09 (25 charged calls, $0.0158 median), not a list price; roughly one call in ten settles above it. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.0165 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
 - id: anyapi.web.crawl
   tier: extended
   platform: web

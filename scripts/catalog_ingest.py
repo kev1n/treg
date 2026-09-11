@@ -1259,6 +1259,21 @@ ANYAPI_PLATFORM = {
     "company": "companies", "person": "people", "social": "people",
 }
 
+# PER-SKU PLATFORM OVERRIDE, because one vendor prefix can span two platforms.
+#
+# treg splits SEO tooling in two: `google` is keyword and domain-ranking data, `web` is backlinks,
+# referring domains and authority. semrush.yaml - already in this repo - splits its OWN endpoints
+# exactly that way: keyword volume and domain rankings under `google`, backlinks and anchors under
+# `web`. The prefix rule above cannot express that, so the four AnyAPI rows that resell keyword and
+# domain-ranking data are named here; ahrefs.backlinks and ahrefs.overview stay on `web`, where
+# semrush.yaml files the same two jobs as web.backlinks.list and web.backlinks.summary.
+ANYAPI_PLATFORM_SKU = {
+    "ahrefs.keyword_ideas": "google",
+    "ahrefs.keywords": "google",
+    "semrush.keywords": "google",
+    "semrush.overview": "google",
+}
+
 # Excluded from the listing by AnyAPI. Kept as an explicit id list rather than a prefix rule
 # because the excluded set does not line up with SKU prefixes.
 ANYAPI_EXCLUDE_PREFIX = ("apollo.",)
@@ -1498,7 +1513,7 @@ def ingest_anyapi(refresh: bool = False):
         content = (op.get("requestBody") or {}).get("content", {}).get("application/json", {})
         example = content.get("example") or {}
         prefix = sku.split(".")[0]
-        platform = ANYAPI_PLATFORM.get(prefix, prefix)
+        platform = ANYAPI_PLATFORM_SKU.get(sku) or ANYAPI_PLATFORM.get(prefix, prefix)
         if platform not in ANYAPI_KEEP_PLATFORMS:
             continue
         ep = {

@@ -47,9 +47,8 @@ limits: no published per-key request-rate limit on /v1/run - AnyAPI does not adv
   3 per IP per hour.
 pricing_url: https://getanyapi.com/catalog
 proposed_capabilities:
-  google.maps.place: Look up one Google Maps place and its details
   google.maps.reviews: List the Google Maps reviews of a place
-  google.serp.autocomplete: Get Google's autocomplete suggestions for a partial query
+  google.serp.ai_overview: Get the AI Overview panel Google shows above a search result
   linkedin.email.work.find: Find work email from a LinkedIn profile, optionally with phone
 endpoints:
 - id: anyapi.x.search.posts
@@ -1648,8 +1647,8 @@ endpoints:
     as `costUsd`, so `reported_charge` settles the real number rather than this estimate. A request no
     source could serve is not charged. Send the `max_cost_usd` query parameter to refuse any source dearer
     than a price you name.
-- id: anyapi.x.user.replies
-  capability: x.user.replies
+- id: anyapi.x.post.comments
+  capability: x.post.comments
   platform: x
   scope: any_account
   kind: data
@@ -1689,13 +1688,15 @@ endpoints:
     checked: '2026-09-09'
     confidence: verified
   docs_url: https://getanyapi.com/api/twitter/replies
-  note: AnyAPI slug `twitter.replies`. Price is the cheapest source's advertised price, because the sources
-    that serve this endpoint charge very different amounts for the same number of results; a rescue on
-    a dearer source settles above it. 4 sources can serve it; the cheapest serves first and a failed attempt
-    is retried on the next, up to a $0.0138 ceiling per request. Every response reports its exact charge
-    as `costUsd`, so `reported_charge` settles the real number rather than this estimate. A request no
-    source could serve is not charged. Send the `max_cost_usd` query parameter to refuse any source dearer
-    than a price you name.
+  note: These are the replies to ONE post, keyed by post URL. A user's own replies across their timeline
+    are a different job and a different shelf (`x.user.replies`); AnyAPI does not sell that one. AnyAPI
+    slug `twitter.replies`. Price is the cheapest source's advertised price, because the sources that serve
+    this endpoint charge very different amounts for the same number of results; a rescue on a dearer source
+    settles above it. 4 sources can serve it; the cheapest serves first and a failed attempt is retried
+    on the next, up to a $0.0138 ceiling per request. Every response reports its exact charge as `costUsd`,
+    so `reported_charge` settles the real number rather than this estimate. A request no source could serve
+    is not charged. Send the `max_cost_usd` query parameter to refuse any source dearer than a price you
+    name.
 - id: anyapi.linkedin.company.people
   capability: linkedin.company.people
   platform: linkedin
@@ -1794,8 +1795,8 @@ endpoints:
     `costUsd`, so `reported_charge` settles the real number rather than this estimate. A request no source
     could serve is not charged. Send the `max_cost_usd` query parameter to refuse any source dearer than
     a price you name.
-- id: anyapi.google.serp.ai_mode
-  capability: google.serp.ai_mode
+- id: anyapi.google.serp.ai_overview
+  capability: google.serp.ai_overview
   platform: google
   scope: any_account
   kind: data
@@ -1829,8 +1830,12 @@ endpoints:
     checked: '2026-09-09'
     confidence: verified
   docs_url: https://getanyapi.com/api/google/ai-overview
-  note: 'SLOW BY NATURE: Google regenerates the overview per scrape, and the committed test_request took
-    91 seconds on 2026-09-08. Set a client timeout above two minutes before calling it. AnyAPI slug `google.ai_overview`.
+  note: 'AI OVERVIEW IS NOT AI MODE. This returns the AI Overview panel Google renders above an ordinary
+    search result. AI Mode is Google''s separate conversational surface, which `google.serp.ai_mode` names
+    and three other providers sell there; the two are generated differently, cite different sources and
+    answer different questions, so they do not belong on one shelf. AnyAPI has no AI Mode endpoint. SLOW
+    BY NATURE: Google regenerates the overview per scrape, and the committed test_request took 91 seconds
+    on 2026-09-08. Set a client timeout above two minutes before calling it. AnyAPI slug `google.ai_overview`.
     Price is the p90 of what AnyAPI really charged for this endpoint over the 60 days to 2026-09-09 (572
     charged calls, $0.0018 median), not a list price; roughly one call in ten settles above it. 2 sources
     can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.00336
@@ -2095,8 +2100,8 @@ endpoints:
     to a $0.0441 ceiling per request. Every response reports its exact charge as `costUsd`, so `reported_charge`
     settles the real number rather than this estimate. A request no source could serve is not charged.
     Send the `max_cost_usd` query parameter to refuse any source dearer than a price you name.'
-- id: anyapi.google.maps.place
-  capability: google.maps.place
+- id: anyapi.google.serp.maps.place
+  capability: google.serp.maps
   platform: google
   scope: any_account
   kind: data
@@ -2173,15 +2178,16 @@ endpoints:
     checked: '2026-09-09'
     confidence: verified
   docs_url: https://getanyapi.com/api/maps/place
-  note: AnyAPI slug `maps.place`. Price is the cheapest source's advertised price, because the sources
-    that serve this endpoint charge very different amounts for the same number of results; a rescue on
-    a dearer source settles above it. 3 sources can serve it; the cheapest serves first and a failed attempt
-    is retried on the next, up to a $0.0099 ceiling per request. Every response reports its exact charge
-    as `costUsd`, so `reported_charge` settles the real number rather than this estimate. A request no
-    source could serve is not charged. Send the `max_cost_usd` query parameter to refuse any source dearer
-    than a price you name.
-- id: anyapi.google.serp.autocomplete
-  capability: google.serp.autocomplete
+  note: 'Two AnyAPI rows share this shelf: this one resolves a query to the SINGLE best-matching place with
+    its details, and maps.search returns up to 20 matches for a keyword and location. AnyAPI slug `maps.place`.
+    Price is the cheapest source''s advertised price, because the sources that serve this endpoint charge
+    very different amounts for the same number of results; a rescue on a dearer source settles above it.
+    3 sources can serve it; the cheapest serves first and a failed attempt is retried on the next, up to
+    a $0.0099 ceiling per request. Every response reports its exact charge as `costUsd`, so `reported_charge`
+    settles the real number rather than this estimate. A request no source could serve is not charged. Send
+    the `max_cost_usd` query parameter to refuse any source dearer than a price you name.'
+- id: anyapi.google.keywords.ideas
+  capability: google.keywords.ideas
   platform: google
   scope: any_account
   kind: data
@@ -2223,10 +2229,11 @@ endpoints:
     checked: '2026-09-09'
     confidence: verified
   docs_url: https://getanyapi.com/api/google/autocomplete
-  note: AnyAPI slug `google.autocomplete`. Price is the p90 of what AnyAPI really charged for this endpoint
-    over the 60 days to 2026-09-09 (638 charged calls, $0.00099 median), not a list price; roughly one
-    call in ten settles above it. 1 source can serve it; the cheapest serves first and a failed attempt
-    is retried on the next, up to a $0.00099 ceiling per request. Every response reports its exact charge
-    as `costUsd`, so `reported_charge` settles the real number rather than this estimate. A request no
-    source could serve is not charged. Send the `max_cost_usd` query parameter to refuse any source dearer
-    than a price you name.
+  note: 'The autocomplete flavour of keyword ideas: Google''s own suggestions for a partial query, with
+    no search volume, CPC or difficulty figures attached. AnyAPI slug `google.autocomplete`. Price is the
+    p90 of what AnyAPI really charged for this endpoint over the 60 days to 2026-09-09 (638 charged calls,
+    $0.00099 median), not a list price; roughly one call in ten settles above it. 1 source can serve it;
+    the cheapest serves first and a failed attempt is retried on the next, up to a $0.00099 ceiling per
+    request. Every response reports its exact charge as `costUsd`, so `reported_charge` settles the real
+    number rather than this estimate. A request no source could serve is not charged. Send the `max_cost_usd`
+    query parameter to refuse any source dearer than a price you name.'
