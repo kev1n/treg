@@ -155,6 +155,10 @@ async def test_rate_limited_per_ip(anon):
 
 async def test_gc_reaps_expired_sandboxes(anon):
     tok = (await anon.post("/demo/sandbox")).json()["token"]
+    # gc deletes the visitor's org rows. A fire-and-forget audit or archive write still in flight
+    # holds the SQLite write lock, gc skips that visitor rather than raising, and the count comes
+    # back one short. Drain what the requests above scheduled before reaping.
+    await drain_background_writes()
     async with session_maker() as db:
         u = (await db.execute(
             select(User).where(User.email.like(f"visitor-%@{sandbox.SANDBOX_DOMAIN}")))).scalar_one()
@@ -182,6 +186,7 @@ async def test_gc_reaps_a_sandbox_that_made_an_idempotent_call(anon):
     r = await anon.get(f"/call/{STRIPE['base']}/{STRIPE['example']['path']}",
                        headers={**_h(tok), "Idempotency-Key": "retry-1"})
     assert r.status_code == 200, r.text
+    await drain_background_writes()
     async with session_maker() as db:
         assert (await db.execute(select(IdempotentCall))).scalars().all(), (
             "the call did not leave an IdempotentCall row - this test no longer reproduces the bug")
@@ -227,6 +232,7 @@ async def test_gc_skips_a_sandbox_it_cannot_delete_and_reaps_the_rest(anon, monk
         await real_cascade(org, db)
 
     monkeypatch.setattr(onboard_sandbox, "cascade_delete_org", cascade_unless_poisoned)
+    await drain_background_writes()
     async with session_maker() as db:
         for u in (await db.execute(
                 select(User).where(User.email.like(f"visitor-%@{sandbox.SANDBOX_DOMAIN}")))).scalars().all():
