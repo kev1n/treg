@@ -544,7 +544,7 @@ async def _execute_call(request: _ApplicationRequest, upstream_client: httpx.Asy
     audit_slug = caller.org.slug  # PostHog group key — must match the browser's posthog.group('team', slug)
 
     cache_diagnostics: dict = {"cache_outcome": "not_attempted", "cache_mode": archive.mode(),
-                               "cache_comparison_mode": "strict",
+                               "cache_comparison_mode": "json",
                                "cache_ttl_policy": "adaptive",
                                "cache_rollout_percent": get_settings().archive_serve_percent}
 
