@@ -331,7 +331,13 @@ async def test_ignore_cannot_mask_result_transitions_and_uses_decisive_baseline(
     k = await _key()
     assert (k.stable_seen, k.change_seen, k.result_state) == (1, 1, 'empty')
     observed = [p for name, p in events if name == 'archive_change_observed']
-    assert [p['masked_by_ignore'] for p in observed] == [False, True, False]
+    # Unknown evidence does not drive learning or produce a comparison event. The rescued
+    # found comparison must describe the decisive found body, not the intervening empty object.
+    assert [p['masked_by_ignore'] for p in observed] == [True, False]
+    assert observed[0]['changed_paths'] == ['data.emails[*].value']
+    assert observed[0]['path_count'] == 1
+    assert observed[0]['sole_path'] == 'data.emails[*].value'
+    assert observed[1]['changed_paths'] == ['data.emails[*]', 'meta.results']
     await _call(clients, monkeypatch, EMPTY)
     assert (await _key()).change_seen == 1
     response = await _call(clients, monkeypatch, changed)
