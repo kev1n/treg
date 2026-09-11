@@ -1251,32 +1251,23 @@ ANYAPI_PLATFORM = {
     "yahoo_finance": "stocks",
     "coinmarketcap": "crypto",
     "dexscreener": "crypto",
-    # SEO/backlink tooling describes the open web and Google's index, not a product surface.
-    "ahrefs": "web", "semrush": "web", "seo": "google", "web": "web",
+    "web": "web",
     # AI answer engines already have a shelf.
     "chatgpt": "ai-search", "gemini": "ai-search", "perplexity": "ai-search",
     # people/company enrichment shelves
     "company": "companies", "person": "people", "social": "people",
 }
 
-# PER-SKU PLATFORM OVERRIDE, because one vendor prefix can span two platforms.
+# Excluded from the listing by AnyAPI. Mostly an explicit id list, because the excluded set does
+# not line up with SKU prefixes; three families do, and are excluded by prefix.
 #
-# treg splits SEO tooling in two: `google` is keyword and domain-ranking data, `web` is backlinks,
-# referring domains and authority. semrush.yaml - already in this repo - splits its OWN endpoints
-# exactly that way: keyword volume and domain rankings under `google`, backlinks and anchors under
-# `web`. The prefix rule above cannot express that, so the four AnyAPI rows that resell keyword and
-# domain-ranking data are named here; ahrefs.backlinks and ahrefs.overview stay on `web`, where
-# semrush.yaml files the same two jobs as web.backlinks.list and web.backlinks.summary.
-ANYAPI_PLATFORM_SKU = {
-    "ahrefs.keyword_ideas": "google",
-    "ahrefs.keywords": "google",
-    "semrush.keywords": "google",
-    "semrush.overview": "google",
-}
-
-# Excluded from the listing by AnyAPI. Kept as an explicit id list rather than a prefix rule
-# because the excluded set does not line up with SKU prefixes.
-ANYAPI_EXCLUDE_PREFIX = ("apollo.",)
+# `seo.`, `ahrefs.` and `semrush.` are AnyAPI's resale of SEO tooling - keyword volume,
+# ranked keywords, domain overviews, backlinks. Every shelf they would land on in this repo
+# (google.keywords.*, google.domain.*, web.backlinks.*) is already held by the primary vendor
+# of that data, dataforseo, semrush, seranking, serpstat, spyfu and ahrefs among them, so a
+# reseller row there adds a dearer copy of a price a buyer can already compare. AnyAPI does
+# not list them.
+ANYAPI_EXCLUDE_PREFIX = ("apollo.", "seo.", "ahrefs.", "semrush.")
 ANYAPI_EXCLUDE = frozenset({
     "company_enrichment.lusha", "company_enrichment.crustdata_v3", "company_enrichment.prospeo",
     "company_enrichment.peopledatalabs", "company_search.ai_ark", "company_search.crustdata_v3",
@@ -1513,7 +1504,7 @@ def ingest_anyapi(refresh: bool = False):
         content = (op.get("requestBody") or {}).get("content", {}).get("application/json", {})
         example = content.get("example") or {}
         prefix = sku.split(".")[0]
-        platform = ANYAPI_PLATFORM_SKU.get(sku) or ANYAPI_PLATFORM.get(prefix, prefix)
+        platform = ANYAPI_PLATFORM.get(prefix, prefix)
         if platform not in ANYAPI_KEEP_PLATFORMS:
             continue
         ep = {
