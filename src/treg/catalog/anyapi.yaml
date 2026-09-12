@@ -107,7 +107,7 @@ endpoints:
       unit: usd
     source: observed
     source_url: https://api.getanyapi.com/v1/apis/twitter.search
-    checked: '2026-09-10'
+    checked: '2026-09-11'
     confidence: verified
   example_response: examples/anyapi.x.search.posts.json
   docs_url: https://getanyapi.com/api/twitter/search
@@ -150,7 +150,7 @@ endpoints:
       unit: usd
     source: rate_card_api
     source_url: https://api.getanyapi.com/v1/apis/twitter.profile
-    checked: '2026-09-10'
+    checked: '2026-09-11'
     confidence: verified
   example_response: examples/anyapi.x.user.profile.json
   docs_url: https://getanyapi.com/api/twitter/profile
@@ -212,7 +212,7 @@ endpoints:
       unit: usd
     source: observed
     source_url: https://api.getanyapi.com/v1/apis/instagram.reels_search
-    checked: '2026-09-10'
+    checked: '2026-09-11'
     confidence: verified
   example_response: examples/anyapi.instagram.search.reels.json
   docs_url: https://getanyapi.com/api/instagram/reels-search
@@ -304,7 +304,7 @@ endpoints:
       unit: usd
     source: observed
     source_url: https://api.getanyapi.com/v1/apis/google.search
-    checked: '2026-09-10'
+    checked: '2026-09-11'
     confidence: verified
   example_response: examples/anyapi.google.serp.organic.json
   docs_url: https://getanyapi.com/api/google/search
@@ -364,7 +364,7 @@ endpoints:
       unit: usd
     source: observed
     source_url: https://api.getanyapi.com/v1/apis/linkedin.search_posts
-    checked: '2026-09-10'
+    checked: '2026-09-11'
     confidence: verified
   example_response: examples/anyapi.linkedin.search.posts.json
   docs_url: https://getanyapi.com/api/linkedin/search-posts
@@ -421,7 +421,7 @@ endpoints:
       unit: usd
     source: observed
     source_url: https://api.getanyapi.com/v1/apis/twitter.user_tweets
-    checked: '2026-09-10'
+    checked: '2026-09-11'
     confidence: verified
   example_response: examples/anyapi.x.user.posts.json
   docs_url: https://getanyapi.com/api/twitter/user-tweets
@@ -526,7 +526,7 @@ endpoints:
       unit: usd
     source: observed
     source_url: https://api.getanyapi.com/v1/apis/linkedin.jobs_thin
-    checked: '2026-09-10'
+    checked: '2026-09-11'
     confidence: verified
   example_response: examples/anyapi.linkedin.search.jobs.json
   docs_url: https://getanyapi.com/api/linkedin/jobs-thin
@@ -568,14 +568,14 @@ endpoints:
       unit: usd
     source: observed
     source_url: https://api.getanyapi.com/v1/apis/tiktok.profile
-    checked: '2026-09-10'
+    checked: '2026-09-11'
     confidence: verified
   example_response: examples/anyapi.tiktok.user.profile.json
   docs_url: https://getanyapi.com/api/tiktok/profile
   note: AnyAPI slug `tiktok.profile`. The p90 of what AnyAPI really charged over the 60 days to 2026-09-09
     was $0.001 (2526 charged calls), but a $0.001 source has since been withdrawn and $0.0012 is now the
     cheapest price anyone can pay, so the measured figure is raised to that floor rather than reserving
-    below it. 3 sources can serve it; the cheapest serves first and a failed attempt is retried on the
+    below it. 2 sources can serve it; the cheapest serves first and a failed attempt is retried on the
     next, up to a $0.0012 ceiling per request. Every response reports its exact charge as `costUsd`, so
     `reported_charge` settles the real number rather than this estimate. A request no source could serve
     is not charged. Send the `max_cost_usd` query parameter to refuse any source dearer than a price you
@@ -612,7 +612,7 @@ endpoints:
       unit: usd
     source: observed
     source_url: https://api.getanyapi.com/v1/apis/linkedin.profile_thin
-    checked: '2026-09-10'
+    checked: '2026-09-11'
     confidence: verified
   example_response: examples/anyapi.linkedin.user.profile.json
   docs_url: https://getanyapi.com/api/linkedin/profile-thin
@@ -707,7 +707,7 @@ endpoints:
       unit: usd
     source: rate_card_api
     source_url: https://api.getanyapi.com/v1/apis/maps.search
-    checked: '2026-09-10'
+    checked: '2026-09-11'
     confidence: verified
   example_response: examples/anyapi.google.serp.maps.json
   docs_url: https://getanyapi.com/api/maps/search
@@ -822,7 +822,7 @@ endpoints:
       unit: usd
     source: observed
     source_url: https://api.getanyapi.com/v1/apis/linkedin.search_posts_full
-    checked: '2026-09-10'
+    checked: '2026-09-11'
     confidence: verified
   example_response: examples/anyapi.linkedin.search.posts.full.json
   docs_url: https://getanyapi.com/api/linkedin/search-posts-full
@@ -868,7 +868,7 @@ endpoints:
       url: https://www.instagram.com/reel/DWzrfE2kaY8/
   cost:
     type: per_success
-    value: 0.002
+    value: 0.0015
     currency: USD
     unit: call
     reported_charge:
@@ -876,17 +876,19 @@ endpoints:
       unit: usd
     source: observed
     source_url: https://api.getanyapi.com/v1/apis/instagram.post
-    checked: '2026-09-10'
+    checked: '2026-09-11'
     confidence: verified
   example_response: examples/anyapi.instagram.post.detail.json
   docs_url: https://getanyapi.com/api/instagram/post
-  note: AnyAPI slug `instagram.post`. Price is the p90 of what AnyAPI really charged for this endpoint
+  note: 'AnyAPI slug `instagram.post`. Price is the p90 of what AnyAPI really charged for this endpoint
     over the 60 days to 2026-09-09 (14584 charged calls, $0.0015 median), not a list price; roughly one
-    call in ten settles above it. 3 sources can serve it; the cheapest serves first and a failed attempt
-    is retried on the next, up to a $0.0036 ceiling per request. Every response reports its exact charge
+    call in ten settles above it. That p90 is capped here at $0.0015, the dearest price any source can
+    charge for this request today: the dearer source it measured has since been withdrawn, so no call
+    can settle at the p90 any more. 2 sources can serve it; the cheapest serves first and a failed attempt
+    is retried on the next, up to a $0.0015 ceiling per request. Every response reports its exact charge
     as `costUsd`, so `reported_charge` settles the real number rather than this estimate. A request no
     source could serve is not charged. Send the `max_cost_usd` query parameter to refuse any source dearer
-    than a price you name.
+    than a price you name.'
 - id: anyapi.instagram.user.reels
   capability: instagram.user.reels
   platform: instagram
@@ -926,7 +928,7 @@ endpoints:
       unit: usd
     source: observed
     source_url: https://api.getanyapi.com/v1/apis/instagram.user_reels
-    checked: '2026-09-10'
+    checked: '2026-09-11'
     confidence: verified
   example_response: examples/anyapi.instagram.user.reels.json
   docs_url: https://getanyapi.com/api/instagram/user-reels
@@ -972,7 +974,7 @@ endpoints:
       unit: usd
     source: observed
     source_url: https://api.getanyapi.com/v1/apis/instagram.user_posts
-    checked: '2026-09-10'
+    checked: '2026-09-11'
     confidence: verified
   example_response: examples/anyapi.instagram.user.posts.json
   docs_url: https://getanyapi.com/api/instagram/user-posts
@@ -1016,7 +1018,7 @@ endpoints:
       unit: usd
     source: observed
     source_url: https://api.getanyapi.com/v1/apis/linkedin.profile
-    checked: '2026-09-10'
+    checked: '2026-09-11'
     confidence: verified
   example_response: examples/anyapi.linkedin.user.profile.full.json
   docs_url: https://getanyapi.com/api/linkedin/profile
@@ -1066,7 +1068,7 @@ endpoints:
       unit: usd
     source: observed
     source_url: https://api.getanyapi.com/v1/apis/twitter.user_posts
-    checked: '2026-09-10'
+    checked: '2026-09-11'
     confidence: verified
   example_response: examples/anyapi.x.user.posts.timeline.json
   docs_url: https://getanyapi.com/api/twitter/user-posts
@@ -1139,7 +1141,7 @@ endpoints:
       unit: usd
     source: observed
     source_url: https://api.getanyapi.com/v1/apis/instagram.search_hashtag
-    checked: '2026-09-10'
+    checked: '2026-09-11'
     confidence: verified
   example_response: examples/anyapi.instagram.hashtag.posts.json
   docs_url: https://getanyapi.com/api/instagram/search-hashtag
@@ -1185,7 +1187,7 @@ endpoints:
       unit: usd
     source: observed
     source_url: https://api.getanyapi.com/v1/apis/tiktok.profile_videos
-    checked: '2026-09-10'
+    checked: '2026-09-11'
     confidence: verified
   example_response: examples/anyapi.tiktok.user.videos.json
   docs_url: https://getanyapi.com/api/tiktok/profile-videos
@@ -1231,13 +1233,13 @@ endpoints:
       unit: usd
     source: observed
     source_url: https://api.getanyapi.com/v1/apis/instagram.post_comments
-    checked: '2026-09-10'
+    checked: '2026-09-11'
     confidence: verified
   example_response: examples/anyapi.instagram.post.comments.json
   docs_url: https://getanyapi.com/api/instagram/post-comments
   note: AnyAPI slug `instagram.post_comments`. Price is the p90 of what AnyAPI really charged for this
     endpoint over the 60 days to 2026-09-09 (9965 charged calls, $0.0012 median), not a list price; roughly
-    one call in ten settles above it. 3 sources can serve it; the cheapest serves first and a failed attempt
+    one call in ten settles above it. 4 sources can serve it; the cheapest serves first and a failed attempt
     is retried on the next, up to a $0.018 ceiling per request. Every response reports its exact charge
     as `costUsd`, so `reported_charge` settles the real number rather than this estimate. A request no
     source could serve is not charged. Send the `max_cost_usd` query parameter to refuse any source dearer
@@ -1289,7 +1291,7 @@ endpoints:
       unit: usd
     source: observed
     source_url: https://api.getanyapi.com/v1/apis/tiktok.search_top
-    checked: '2026-09-10'
+    checked: '2026-09-11'
     confidence: verified
   example_response: examples/anyapi.tiktok.search.general.json
   docs_url: https://getanyapi.com/api/tiktok/search-top
@@ -1335,13 +1337,13 @@ endpoints:
       unit: usd
     source: observed
     source_url: https://api.getanyapi.com/v1/apis/tiktok.video_comments
-    checked: '2026-09-10'
+    checked: '2026-09-11'
     confidence: verified
   example_response: examples/anyapi.tiktok.video.comments.json
   docs_url: https://getanyapi.com/api/tiktok/video-comments
   note: AnyAPI slug `tiktok.video_comments`. Price is the p90 of what AnyAPI really charged for this endpoint
     over the 60 days to 2026-09-09 (1873 charged calls, $0.00144 median), not a list price; roughly one
-    call in ten settles above it. 3 sources can serve it; the cheapest serves first and a failed attempt
+    call in ten settles above it. 2 sources can serve it; the cheapest serves first and a failed attempt
     is retried on the next, up to a $0.0036 ceiling per request. Every response reports its exact charge
     as `costUsd`, so `reported_charge` settles the real number rather than this estimate. A request no
     source could serve is not charged. Send the `max_cost_usd` query parameter to refuse any source dearer
@@ -1390,7 +1392,7 @@ endpoints:
       unit: usd
     source: observed
     source_url: https://api.getanyapi.com/v1/apis/facebook.group_posts
-    checked: '2026-09-10'
+    checked: '2026-09-11'
     confidence: verified
   example_response: examples/anyapi.facebook.group.posts.json
   docs_url: https://getanyapi.com/api/facebook/group-posts
@@ -1440,7 +1442,7 @@ endpoints:
       unit: usd
     source: observed
     source_url: https://api.getanyapi.com/v1/apis/facebook.profile_posts
-    checked: '2026-09-10'
+    checked: '2026-09-11'
     confidence: verified
   example_response: examples/anyapi.facebook.user.posts.json
   docs_url: https://getanyapi.com/api/facebook/profile-posts
@@ -1482,7 +1484,7 @@ endpoints:
       unit: usd
     source: observed
     source_url: https://api.getanyapi.com/v1/apis/facebook.post
-    checked: '2026-09-10'
+    checked: '2026-09-11'
     confidence: verified
   example_response: examples/anyapi.facebook.post.detail.json
   docs_url: https://getanyapi.com/api/facebook/post
@@ -1557,7 +1559,7 @@ endpoints:
       unit: usd
     source: observed
     source_url: https://api.getanyapi.com/v1/apis/tiktok.search_keyword
-    checked: '2026-09-10'
+    checked: '2026-09-11'
     confidence: verified
   example_response: examples/anyapi.tiktok.search.videos.json
   docs_url: https://getanyapi.com/api/tiktok/search-keyword
@@ -1598,7 +1600,7 @@ endpoints:
       unit: usd
     source: observed
     source_url: https://api.getanyapi.com/v1/apis/tiktok.video_transcript
-    checked: '2026-09-10'
+    checked: '2026-09-11'
     confidence: verified
   example_response: examples/anyapi.tiktok.video.captions.json
   docs_url: https://getanyapi.com/api/tiktok/video-transcript
@@ -1673,7 +1675,7 @@ endpoints:
       unit: usd
     source: observed
     source_url: https://api.getanyapi.com/v1/apis/google.news
-    checked: '2026-09-10'
+    checked: '2026-09-11'
     confidence: verified
   example_response: examples/anyapi.google.serp.news.json
   docs_url: https://getanyapi.com/api/google/news
@@ -1722,7 +1724,7 @@ endpoints:
       unit: usd
     source: rate_card_api
     source_url: https://api.getanyapi.com/v1/apis/twitter.replies
-    checked: '2026-09-10'
+    checked: '2026-09-11'
     confidence: verified
   example_response: examples/anyapi.x.post.comments.json
   docs_url: https://getanyapi.com/api/twitter/replies
@@ -1778,7 +1780,7 @@ endpoints:
       unit: usd
     source: observed
     source_url: https://api.getanyapi.com/v1/apis/linkedin.company_employees
-    checked: '2026-09-10'
+    checked: '2026-09-11'
     confidence: verified
   example_response: examples/anyapi.linkedin.company.people.json
   docs_url: https://getanyapi.com/api/linkedin/company-employees
@@ -1824,7 +1826,7 @@ endpoints:
       unit: usd
     source: observed
     source_url: https://api.getanyapi.com/v1/apis/linkedin.email
-    checked: '2026-09-10'
+    checked: '2026-09-11'
     confidence: verified
   example_response: examples/anyapi.linkedin.email.work.find.json
   docs_url: https://getanyapi.com/api/linkedin/email
@@ -1867,7 +1869,7 @@ endpoints:
       unit: usd
     source: observed
     source_url: https://api.getanyapi.com/v1/apis/google.ai_overview
-    checked: '2026-09-10'
+    checked: '2026-09-11'
     confidence: verified
   example_response: examples/anyapi.google.serp.ai_overview.json
   docs_url: https://getanyapi.com/api/google/ai-overview
@@ -2002,7 +2004,7 @@ endpoints:
       unit: usd
     source: observed
     source_url: https://api.getanyapi.com/v1/apis/linkedin.jobs
-    checked: '2026-09-10'
+    checked: '2026-09-11'
     confidence: verified
   example_response: examples/anyapi.linkedin.search.jobs.full.json
   docs_url: https://getanyapi.com/api/linkedin/jobs
@@ -2050,7 +2052,7 @@ endpoints:
       unit: usd
     source: observed
     source_url: https://api.getanyapi.com/v1/apis/tiktok.search_users
-    checked: '2026-09-10'
+    checked: '2026-09-11'
     confidence: verified
   example_response: examples/anyapi.tiktok.search.users.json
   docs_url: https://getanyapi.com/api/tiktok/search-users
@@ -2130,7 +2132,7 @@ endpoints:
       unit: usd
     source: rate_card_api
     source_url: https://api.getanyapi.com/v1/apis/maps.reviews
-    checked: '2026-09-10'
+    checked: '2026-09-11'
     confidence: verified
   example_response: examples/anyapi.google.maps.reviews.json
   docs_url: https://getanyapi.com/api/maps/reviews
@@ -2219,7 +2221,7 @@ endpoints:
       unit: usd
     source: rate_card_api
     source_url: https://api.getanyapi.com/v1/apis/maps.place
-    checked: '2026-09-10'
+    checked: '2026-09-11'
     confidence: verified
   example_response: examples/anyapi.google.serp.maps.place.json
   docs_url: https://getanyapi.com/api/maps/place
@@ -2272,7 +2274,7 @@ endpoints:
       unit: usd
     source: observed
     source_url: https://api.getanyapi.com/v1/apis/google.autocomplete
-    checked: '2026-09-10'
+    checked: '2026-09-11'
     confidence: verified
   example_response: examples/anyapi.google.keywords.ideas.json
   docs_url: https://getanyapi.com/api/google/autocomplete

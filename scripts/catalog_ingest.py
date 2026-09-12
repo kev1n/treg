@@ -1336,7 +1336,7 @@ ANYAPI_SKIP_PARAMS = {"preferLatencyUnderMs", "requireCursor", "requireSinglePag
 ANYAPI_RATE_CARD = "https://api.getanyapi.com/v1/apis?limit=1000"
 ANYAPI_OPENAPI = "https://api.getanyapi.com/openapi.json"
 # Bumped by hand when the rate card is re-read, so a re-run with no price change is byte-identical.
-ANYAPI_CHECKED = "2026-09-10"
+ANYAPI_CHECKED = "2026-09-11"
 
 # What AnyAPI actually billed, per SKU, over the trailing 60 days: a hand-exported snapshot of the
 # vendor's own request ledger (calls, p50, p90, max USD), the same arrangement as
