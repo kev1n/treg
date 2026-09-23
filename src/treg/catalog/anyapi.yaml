@@ -380,11 +380,12 @@ endpoints:
       limit:
         type: integer
         required: false
-        note: Maximum number of authored tweets and replies to return in the current bulk call (1-1000).
-          The provider may return fewer results.
+        note: Maximum number of authored tweets and replies to return in this page (1-100). Sources return
+          fewer - most cap at 20 - so read `nextCursor` and pass it back as `cursor` to walk further rather
+          than asking for one large page.
         default: 20
         min: 1
-        max: 1000
+        max: 100
         example: 20
     bodyType: json
   test_request:
@@ -1521,27 +1522,21 @@ endpoints:
         note: The keyword to search TikTok for.
         example: cooking
       sortBy:
-        type:
-        - integer
-        - string
+        type: string
         required: false
-        note: Sort order. Use the canonical JSON integer 0 for relevance, 1 for most liked, or 2 for newest
-          first; legacy numeric strings remain accepted.
-        default: 0
+        note: 'Sort order: relevance, most-liked, date-posted.'
+        default: relevance
         enum:
-        - 0
-        - 1
-        - 2
-        - '0'
-        - '1'
-        - '2'
-        example: 0
+        - relevance
+        - most-liked
+        - date-posted
+        example: relevance
     bodyType: json
   test_request:
     body:
       datePosted: 0
       query: cooking
-      sortBy: 0
+      sortBy: relevance
   cost:
     type: per_success
     value: 0.0007

@@ -1059,6 +1059,12 @@ endpoints:
         type: string
         required: false
         note: 'Restrict results to a recent time window: 1h, 1d, 7d, 1y, or all. Default all (no time restriction).'
+        enum:
+        - 1h
+        - 1d
+        - 7d
+        - 1y
+        - all
     bodyType: json
   cost:
     type: per_success
@@ -1226,6 +1232,12 @@ endpoints:
         type: string
         required: false
         note: 'Restrict results to a recent time window: 1h, 1d, 7d, 1y, or all. Default all (no time restriction).'
+        enum:
+        - 1h
+        - 1d
+        - 7d
+        - 1y
+        - all
     bodyType: json
   cost:
     type: per_success
@@ -1282,6 +1294,12 @@ endpoints:
         type: string
         required: false
         note: 'Restrict results to a recent time window: 1h, 1d, 7d, 1y, or all. Default all (no time restriction).'
+        enum:
+        - 1h
+        - 1d
+        - 7d
+        - 1y
+        - all
     bodyType: json
   cost:
     type: per_success
@@ -2931,6 +2949,10 @@ endpoints:
   summary: Fetch a single LinkedIn post or article by URL (title, text, author, like and comment counts, publish date).
   input:
     body:
+      requireFields:
+        type: array
+        required: false
+        note: Optional; omit it and routing is unchanged, with the cheapest source serving. Name the output fields this request must be able to return, for example `image`, and it is served only by a source that returns every one of them. Fields you do not name are still returned whenever the serving source has t
       url:
         type: string
         required: true
@@ -4105,18 +4127,18 @@ endpoints:
     bodyType: json
   cost:
     type: per_success
-    value: 0.00225
+    value: 0.0012
     currency: USD
     unit: call
     reported_charge:
       path: costUsd
       unit: usd
-    source: observed
+    source: rate_card_api
     source_url: https://api.getanyapi.com/v1/apis/reddit.profile
     checked: '2026-09-19'
     confidence: verified
   docs_url: https://getanyapi.com/api/reddit/profile
-  note: AnyAPI slug `reddit.profile`. Priced per result, so the price is the p90 of what AnyAPI really charged for this endpoint over the 60 days to 2026-09-19 (890 charged calls, $0.0012 median), not the list price at the input maximum; roughly one call in ten settles above it. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.00225 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
+  note: AnyAPI slug `reddit.profile`. Price is what the cheapest source charges per request, and that source serves first; a call rescued by a dearer source settles above it. 2 sources can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.00225 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
   verified: '2026-09-19'
   example_response: examples/anyapi.reddit.profile.json
   capability: reddit.user.profile
@@ -4336,6 +4358,12 @@ endpoints:
         type: string
         required: false
         note: 'Optional sort order: relevance, hot, top, new, comments.'
+        enum:
+        - relevance
+        - hot
+        - top
+        - new
+        - comments
       subreddit:
         type: string
         required: true
@@ -4345,6 +4373,13 @@ endpoints:
         type: string
         required: false
         note: 'Optional time filter: all, year, month, week, day, hour.'
+        enum:
+        - all
+        - year
+        - month
+        - week
+        - day
+        - hour
     bodyType: json
   cost:
     type: per_success
@@ -6145,7 +6180,6 @@ endpoints:
   observed_time: 2.89
 - id: anyapi.web.crawl
   tier: extended
-  capability: web.crawl
   platform: web
   domain: crawl
   method: POST
@@ -6183,6 +6217,7 @@ endpoints:
   note: AnyAPI slug `web.crawl`. Priced per result, so the price is the p90 of what AnyAPI really charged for this endpoint over the 60 days to 2026-09-19 (24 charged calls, $0.00495 median), not the list price at the input maximum; roughly one call in ten settles above it. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.0347 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
   verified: '2026-09-19'
   example_response: examples/anyapi.web.crawl.json
+  capability: web.crawl
   test_request:
     body:
       limit: 3
@@ -6190,7 +6225,6 @@ endpoints:
   observed_time: 5.75
 - id: anyapi.web.map
   tier: extended
-  capability: web.map
   platform: web
   domain: map
   method: POST
@@ -6243,6 +6277,7 @@ endpoints:
   note: AnyAPI slug `web.map`. Price is what the cheapest source charges per request, and that source serves first; a call rescued by a dearer source settles above it. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.001 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
   verified: '2026-09-19'
   example_response: examples/anyapi.web.map.json
+  capability: web.map
   test_request:
     body:
       search: domain
@@ -6685,7 +6720,7 @@ endpoints:
     bodyType: json
   cost:
     type: per_success
-    value: 0.005
+    value: 0.00375
     currency: USD
     unit: call
     reported_charge:
@@ -6696,7 +6731,7 @@ endpoints:
     checked: '2026-09-19'
     confidence: verified
   docs_url: https://getanyapi.com/api/twitter/thread
-  note: AnyAPI slug `twitter.thread`. Price is what the cheapest source charges per request, and that source serves first; a call rescued by a dearer source settles above it. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.005 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
+  note: AnyAPI slug `twitter.thread`. Price is what the cheapest source charges per request, and that source serves first; a call rescued by a dearer source settles above it. 1 source can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.00375 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
   verified: '2026-09-19'
   example_response: examples/anyapi.twitter.thread.json
   test_request:
@@ -7512,6 +7547,9 @@ endpoints:
         type: string
         required: false
         note: Comment order (e.g. top, newest).
+        enum:
+        - top
+        - newest
       url:
         type: string
         required: true
@@ -7593,6 +7631,10 @@ endpoints:
         type: string
         required: false
         note: YouTube video ID. A Short uses the same ID as any other video.
+      requireFields:
+        type: array
+        required: false
+        note: Only use sources that return these fields. The cheapest source returns the transcript as one block of text and no timings, so name any of these to be served by a source that carries timed segments instead.
       url:
         type: string
         required: false
@@ -7601,7 +7643,7 @@ endpoints:
     bodyType: json
   cost:
     type: per_success
-    value: 0.00125
+    value: 0.0009
     currency: USD
     unit: call
     reported_charge:
@@ -7612,7 +7654,7 @@ endpoints:
     checked: '2026-09-19'
     confidence: verified
   docs_url: https://getanyapi.com/api/youtube/video-transcript
-  note: AnyAPI slug `youtube.video_transcript`. Price is what the cheapest source charges per request, and that source serves first; a call rescued by a dearer source settles above it. 2 sources can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.011 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
+  note: AnyAPI slug `youtube.video_transcript`. Price is what the cheapest source charges per request, and that source serves first; a call rescued by a dearer source settles above it. 3 sources can serve it; the cheapest serves first and a failed attempt is retried on the next, up to a $0.011 ceiling per request. `costUsd` on the response is the exact charge, which is what reported_charge settles. Send `max_cost_usd` to refuse any source dearer than a price you name.
   verified: '2026-09-19'
   example_response: examples/anyapi.youtube.video_transcript.json
   capability: youtube.video.captions
