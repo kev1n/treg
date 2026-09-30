@@ -1341,7 +1341,7 @@ ANYAPI_SKIP_PARAMS = {"preferLatencyUnderMs", "requireCursor", "requireSinglePag
 ANYAPI_RATE_CARD = "https://api.getanyapi.com/v1/apis?limit=1000"
 ANYAPI_OPENAPI = "https://api.getanyapi.com/openapi.json"
 # Bumped by hand when the rate card is re-read, so a re-run with no price change is byte-identical.
-ANYAPI_CHECKED = "2026-09-26"
+ANYAPI_CHECKED = "2026-09-29"
 
 # What AnyAPI actually billed, per SKU, over the trailing 60 days: a hand-exported snapshot of the
 # vendor's own request ledger (calls, p50, p90, max USD), the same arrangement as
@@ -1416,10 +1416,11 @@ def _anyapi_cost(api: dict) -> dict:
     PER-RESULT SKU (`model: linear`): the p90 of what AnyAPI's ledger billed over the trailing
     window (ANYAPI_MEASURED_FILE). There `pricing.from.maxUsd` is the price at the INPUT MAXIMUM,
     not a floor, and nobody calls at the maximum - instagram.hashtag_analytics advertises $0.0385
-    against a $0.00297 p90 - so the measured charge is the honest number. It is capped at
-    `failoverMaxUsd`, the dearest price any source can charge today: a p90 above that is quoting a
-    source AnyAPI has since withdrawn. A per-result SKU with fewer than 5 charged calls in the
-    window has nothing to measure and falls back to `maxUsd`.
+    against a $0.00297 p90 - so the measured charge is the honest number. It never lists above
+    `pricing.from.maxUsd`, the cheapest source's price at the input maximum: a p90 above that was
+    set by calls a rescue source served or a caller steered to a dearer source, and a default-routed
+    call can always be served for that much. A per-result SKU with fewer than 5 charged calls in
+    the window has nothing to measure and falls back to `maxUsd`.
 
     `source: observed` is this catalog's own word for a price seen being billed rather than read
     off a page (domain/catalog/store.COST_SOURCES); a rate-card price keeps `rate_card_api`.
@@ -1427,9 +1428,8 @@ def _anyapi_cost(api: dict) -> dict:
     source served and how many rows came back, and it is what settles.
     """
     measured = None if _anyapi_is_flat(api) else _anyapi_measured().get(api["id"])
-    price = measured["p90_usd"] if measured else api["pricing"]["from"]["maxUsd"]
-    if measured:
-        price = min(price, api["pricing"].get("failoverMaxUsd") or price)
+    cheapest = api["pricing"]["from"]["maxUsd"]
+    price = min(measured["p90_usd"], cheapest) if measured else cheapest
     return {
         "type": "per_success",
         "value": price,
@@ -1458,11 +1458,11 @@ def anyapi_price_basis(api: dict) -> str:
                  f"endpoint over the {days} days to {as_of} ({m['calls']} charged calls, "
                  f"${m['p50_usd']:g} median), not the list price at the input maximum; roughly one "
                  "call in ten settles above it.")
-        ceiling = api["pricing"].get("failoverMaxUsd")
-        if ceiling and m["p90_usd"] > ceiling:
-            basis += (f" That p90 is capped here at ${ceiling:g}, the dearest price any source can "
-                      "charge for this request today: the dearer source it measured has since been "
-                      "withdrawn.")
+        cheapest = api["pricing"]["from"]["maxUsd"]
+        if m["p90_usd"] > cheapest:
+            basis += (f" That p90 is above ${cheapest:g}, what the cheapest source charges at the "
+                      "input maximum, so the price here is that: the calls above it were served by a "
+                      "dearer source.")
         return basis
     return (f"Priced per result, with too few charged calls in the {days} days to {as_of} to "
             "measure, so the price is the live rate card's cheapest source at the input maximum.")
@@ -1538,9 +1538,10 @@ def ingest_anyapi(refresh: bool = False):
         "A flat-priced SKU lists the cheapest source's per-request price, which is the source that",
         "serves a default-routed call. A per-result SKU lists the p90 of what AnyAPI actually billed",
         "over the 60 days to the export date (scripts/data/anyapi_measured_charges.json), because",
-        "its rate-card price is quoted at the input maximum (cost.source: rate_card_api vs",
-        "observed). A rescue on a dearer source settles ABOVE the listing by design; every response",
-        "reports its exact charge as costUsd, which is what reported_charge settles on.",
+        "its rate-card price is quoted at the input maximum, never above that cheapest-source price",
+        "(cost.source: rate_card_api vs observed). A rescue on a dearer source settles ABOVE the",
+        "listing by design; every response reports its exact charge as costUsd, which is what",
+        "reported_charge settles on.",
     ], carry_capability=True, carry_input=False)
     return out, {"endpoints": len(endpoints)}
 
